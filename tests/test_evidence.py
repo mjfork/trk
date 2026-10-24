@@ -261,6 +261,7 @@ def test_the_sha_is_stored_lowercase_and_add_prints_the_id(trk, world):
 def test_evidence_add_records_the_criterion_version_and_the_session(trk, world):
     t = new_ticket(trk, world["J"])
     ok(trk, "criterion", "edit", t, "ac-1", "It works well.")
+    ok(trk, "claim", t, "--session", "s-9")
     run(trk, t, "verified", world["m"], "pass", "--criterion", "AC-1", "--session", "s-9")
     (row,) = listed(trk, t)
     assert (row["criterion"], row["criterion_version"], row["session"]) == ("ac-1", 2, "s-9")

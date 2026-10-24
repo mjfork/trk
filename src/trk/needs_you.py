@@ -87,11 +87,12 @@ def blocked(conn, actor_id):
 
 
 def _holds(conn, row, actor_id):
-    """Whether an open blocker waits on the person: an ask resolving to them, or a decision or ticket they own."""
+    """Whether an open blocker waits on the person: an ask resolving to them (a held one waits on no one yet),
+    or a decision or ticket they own."""
     if row["status"] != "open":
         return False
     if row["form"] == "ask":
-        return asks.resolve(conn, row) == actor_id
+        return asks.held_reason(conn, row) is None and asks.resolve(conn, row) == actor_id
     if row["form"] == "decision" or stages.is_ticket(row):
         return items.hierarchy(conn, row["id"])["effective_owner"] == actor_id
     return False

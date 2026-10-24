@@ -18,9 +18,18 @@ import pytest
 from conftest import Result
 from gated import DEST, accept, accepting, closable, commit, git, resolving, section_file
 from installed_trk import MISSING, TRK
-from test_blast_and_verified import blast, feed, head, item, merge, new_ticket, ok, refusal, write_brief
+from test_blast_and_verified import blast, feed, head, item, merge, ok, refusal, write_brief
+from test_blast_and_verified import new_ticket as new_unclaimed_ticket
 from test_merged_review import FORK, REVIEW, V, W, build_at, ledger_needs, tied_ask
 from store_note import without_note
+
+
+def new_ticket(trk, parent, form="spec-bound", title="T"):
+    """A new ticket, claimed by the builder in W when it is ready (its writes need the claim)."""
+    t = new_unclaimed_ticket(trk, parent, form, title)
+    trk("claim", t, *W)
+    return t
+
 
 @pytest.fixture
 def trk(trk_home):
@@ -192,8 +201,9 @@ def test_ac3_built_needs_a_pr_and_a_passing_test_run_at_the_head(trk, world):
     ok(trk, "advance", t1, *W)
     assert item(trk, t1)["stage"] == "built"
 
-    row = next(r for r in trk("ready", "--root", world["P"], "--json").json()["items"] if r["id"] == t1)
     refused = refusal(trk, "advance", t1, *W)
+    ok(trk, "claim", "release", t1, *W)  # a claimed ticket is off the frontier
+    row = next(r for r in trk("ready", "--root", world["P"], "--json").json()["items"] if r["id"] == t1)
     assert row["gate"]["next"] == item(trk, t1)["gate"]["next"] == "merged"
     assert row["gate"]["missing"] == item(trk, t1)["gate"]["missing"] == refused["missing"]
 
@@ -453,6 +463,8 @@ def test_ac14_ready_keeps_one_stage_and_its_missing_lists_equal_shows(trk, world
     merge(trk, at_merged, world["m"])
     ok(trk, "advance", at_merged, *W)
     new_ticket(trk, world["J"], form="self-contained", title="framed")
+    for claimed in (specd, at_built, at_merged):  # a claimed ticket is off the frontier
+        ok(trk, "claim", "release", claimed, *W)
 
     assert [r["id"] for r in trk("ready", "--root", world["P"], "--stage", "merged", "--json").json()["items"]] == [
         at_merged]

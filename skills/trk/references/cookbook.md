@@ -90,6 +90,7 @@ T advance <id> --judgment "<why it is self-contained>" --as A
 
 ```bash
 T ledger add <id> --kind fork --decided "…" --alternative "…" --why "…" --as A
+T ledger withdraw <id> <n> --reason "<why>" --as A           # an unjudged, uncited row; the builder (any claimant) only rows its own session wrote and only before any audit, an auditor only its own, the driver never an auditor's row
 T evidence add <id> --kind pr --gate built --ref <branch|PR URL|none> --sha <head> --note "…" --as A
 T evidence add <id> --kind test-run --gate built --ref "<command>" --sha <head> --verdict pass --note "…" --as A
 T advance <id> --as A                                   # -> built
@@ -104,6 +105,9 @@ T skip <id> merged --reason "changes no repo" --as A    # from built, instead of
 ```bash
 T evidence add <id> --kind test-run --gate verified --criterion ac-1 \
   --ref "<command or run>" --sha <sha containing the merge> --verdict pass --note "…" --as A
+# A run that failed on purpose at the base, before the fix (red-first proof; sha is an ancestor of the merge):
+T evidence add <id> --kind test-run --gate verified --criterion ac-1 \
+  --ref "<command or run>" --sha <base> --red-first --note "3 of 3 fail at base" --as A
 T section set <id> resolution --file tmp/resolution.md --as A
 T advance <id> --outcome "<one sentence: what shipped>" --as A     # closes done
 ```
@@ -124,6 +128,9 @@ T ask <id> --to engineering --ledger <n> "<question>" --question @tmp/q.md --as 
 ```bash
 T ask <id> --to engineering "<question title>" --question @tmp/ask.md --as A
 T waiting --me <actor> --json
+T ask <id> --to product "<question title>" --question @tmp/ask.md --option "<label 1>" --option "<label 2>" --recommend 2 --as A   # multiple choice
+T section get <ask> options --json          # {"options":[{"n":1,"label":…}…],"recommended":N|null}
+T answer <ask> --option 2 [--answer @tmp/why.md] --as <answerer>   # outcome "Option 2: <label>"
 T section get <ask> answer --json
 T withdraw <ask> --reason "<why>" --as A
 T answer <ask> --outcome "<gist>" --answer @tmp/answer.md --as <answerer>   # only for "this is my answer"
@@ -144,6 +151,22 @@ T handoff show <id> --all --json
 T evidence add <project> --kind judgment --gate close --criterion ac-1 --verdict pass \
   --note "<delivering items by title and id>" --as A
 T close <project> --resolution done --outcome "<one sentence>" --as A
+```
+
+A program takes no `judgment` for close. Each criterion needs a run with a ref and the release sha, or a
+`human-accept` from the actor the criterion text names (`accept-by: <actor or role>`):
+
+```bash
+T evidence add <program> --kind test-run --gate close --criterion ac-1 --verdict pass \
+  --ref https://github.com/<owner>/<repo>/actions/runs/<id> --sha <release sha> --note "<one line>" --as A
+# the job a release run must have passed: a `release-verify-job: <job name>` line in the program's notes,
+# else, for every program, T config set release-verify-job <job name>
+# a PERSON writes either one (an agent's edit or config set does not count); the run must be a push, dispatch or
+# schedule on the default branch, a release/<segment> branch or a tag, and GitHub must protect that ref (ruleset)
+# the run must be of a repo the program names (T edit <program> --add-repo <path>; its GitHub origin)
+T evidence add <program> --kind human-accept --gate close --criterion ac-2 --verdict pass \
+  --ref <page or message> --note "<one line>" --as <the named acceptor>
+T close <program> --resolution done --outcome "<one sentence>" --as A
 ```
 
 ## Fix a mistake

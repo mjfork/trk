@@ -6,7 +6,7 @@ stage crossed gets one `stage.changed` row. `items` is imported inside the funct
 
 import json
 
-from . import clock, criteria, sections
+from . import claims, clock, criteria, sections
 from .errors import gate_unmet, refused, usage
 
 STAGES = ("framed", "specd", "built", "merged", "verified")
@@ -176,8 +176,14 @@ def _criterion_passes(conn, row, weighing, gate, kinds):
     for criterion in live:
         latest = weighing.latest(kinds, gate, criterion["n"])
         if latest is None or latest["verdict"] != "pass":
-            missing.append({"need": "criterion-pass", "criterion": criteria.handle(criterion["n"]),
-                            "version": criterion["version"], "latest": evidence.summary(latest)})
+            need = {"need": "criterion-pass", "criterion": criteria.handle(criterion["n"]),
+                    "version": criterion["version"], "latest": evidence.summary(latest)}
+            turned_away = [{"id": r["id"], "kind": r["kind"], "reason": r["reason"]} for r in weighing.rows
+                       if r["gate"] == gate and r["criterion_n"] == criterion["n"]
+                       and r["reason"] in evidence.PROGRAM_CLOSE_REASONS]
+            if turned_away:  # a program's close turned these rows away: say why, so the next row can be right
+                need["uncounted"] = turned_away
+            missing.append(need)
     return missing
 
 
@@ -185,8 +191,9 @@ def _close(conn, row):
     """Closing `done`: every child but an ask closed (Core's `open-children`; `close` refuses an open ask first, `open-asks`),
     then a decision's `resolution` written, or a passing `close` row for every live criterion of a
     project or program (a run, or a `judgment` citing what delivered it). A project also needs its spec
-    accepted (`spec-accepted`, amended 2026-10-11, tr-afrvc)."""
-    from . import evidence, items
+    accepted (`spec-accepted`, amended 2026-10-11, tr-afrvc). A program's rows are weighed harder
+    (`evidence.PROGRAM_CLOSE_REASONS`, tr-43mme): a `judgment` never counts, so its criteria pass on runs."""
+    from . import evidence, items, release
 
     open_children = [c["id"] for c in items.children(conn, row["id"], open_only=True) if c["form"] != "ask"]
     missing = [{"need": "open-children", "children": open_children}] if open_children else []
@@ -195,7 +202,8 @@ def _close(conn, row):
     if row["kind"] == "project" and row["spec_state"] != "accepted":
         missing.append({"need": "spec-accepted", "project": row["id"]})
     weighing = evidence.weigh(conn, row)
-    return missing + _criterion_passes(conn, row, weighing, "close", (*evidence.RUNS, "judgment"))
+    return (missing + _criterion_passes(conn, row, weighing, "close", (*evidence.RUNS, "judgment"))
+            + release.pending(conn, row, weighing))
 
 
 # Gate name -> check(conn, row) -> missing list. Later gates plug in here.
@@ -250,6 +258,8 @@ def advance(tx, raw_id, judgment=None, outcome=None):
     target = _following(row["stage"])
     if target is None:
         raise usage(f"{item_id} is at {row['stage']}, the last stage")
+    if row["stage"] != "framed":  # framed to specd is a judgment, which the claimant need not hold
+        claims.require_held(tx, row, "advance")
     if target == "verified":
         outcome = items.check_outcome(outcome, "advancing into verified closes the ticket done: it needs "
                                       "--outcome \"<one sentence>\"")
@@ -352,6 +362,10 @@ def move_back(tx, row, stage, via, reason):
                     (stage, int(bool(skipped)), clock.stamp(tx.now), row["id"]))
     crossed = list(reversed(STAGES[STAGES.index(stage):STAGES.index(row["stage"])]))
     journal_moves(tx, row["id"], row["stage"], crossed, via, reason)
+    if STAGES.index(stage) <= STAGES.index("specd"):  # a claim held now counts as a builder's: refresh the byline
+        from . import items
+
+        items.refresh_builder_asks(tx, row["id"])
 
 
 def closes_gated(row):

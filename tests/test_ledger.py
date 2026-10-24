@@ -69,19 +69,29 @@ def as_(actor, session=None):
 
 
 def build(trk, t, actor="builder", session="W"):
-    """pr and a passing test-run at HEAD as `actor` in `session`, then advance to Built."""
+    """The claim, pr and a passing test-run at HEAD as `actor` in `session`, then advance to Built and let go."""
+    ok(trk, "claim", t, *as_(actor, session))
     ok(trk, "evidence", "add", t, "--kind", "pr", "--gate", "built", "--ref", "pr-1", "--sha", HEAD, "--note", "PR",
        *as_(actor, session))
     ok(trk, "evidence", "add", t, "--kind", "test-run", "--gate", "built", "--ref", "run-1", "--sha", HEAD,
        "--verdict", "pass", "--note", "green", *as_(actor, session))
     ok(trk, "advance", t, *as_(actor, session))
+    ok(trk, "claim", "release", t, *as_(actor, session))
 
 
 FORK = ("--kind", "fork", "--decided", "Kept the cache", "--alternative", "Dropped it", "--why", "Reads are hot")
 
 
 def fork(trk, t, *flags):
-    return ok(trk, "ledger", "add", t, *FORK, *flags)
+    """A builder ledger row; a writer with a session holds the ticket's claim while it writes it."""
+    held = "--session" in flags and "--origin" not in flags
+    if held:
+        ok(trk, "claim", t, *flags)
+    try:
+        return ok(trk, "ledger", "add", t, *FORK, *flags)
+    finally:
+        if held:
+            ok(trk, "claim", "release", t, *flags)
 
 
 @pytest.fixture
@@ -120,6 +130,7 @@ def test_rows_are_numbered_per_ticket_and_a_correction_refers_to_the_row_it_corr
     other = new_ticket(trk, world)
     assert fork(trk, other) == "ledger-1"
     since = head(trk)
+    ok(trk, "claim", built, *as_("builder", "W"))
     assert ok(trk, "ledger", "add", built, "--kind", "contradiction", "--decided", "Wrote to the journal twice",
               "--why", "Simpler", "--conflicts-with", "docs/adr/0002-herdr-contract.md", "--file", "src/a.py",
               "--file", "src/b.py", "--sha", HEAD.upper(), *as_("builder", "W")) == "ledger-2"
@@ -198,8 +209,10 @@ def by_pr(trk, world):
     t = new_ticket(trk, world)
     build(trk, t, "michael", "M")
     fork(trk, t, *as_("michael", "M"))
+    ok(trk, "claim", t, *as_("worker", "X"))
     ok(trk, "evidence", "add", t, "--kind", "pr", "--gate", "built", "--ref", "pr-1", "--sha", HEAD, "--note", "PR",
        *as_("worker", "X"))
+    ok(trk, "claim", "release", t, *as_("worker", "X"))
     return t
 
 
@@ -207,8 +220,10 @@ def by_test_run(trk, world):
     t = new_ticket(trk, world)
     build(trk, t, "michael", "M")
     fork(trk, t, *as_("michael", "M"))
+    ok(trk, "claim", t, *as_("worker", "X"))
     ok(trk, "evidence", "add", t, "--kind", "test-run", "--gate", "built", "--ref", "run-2", "--sha", HEAD,
        "--verdict", "pass", "--note", "green", *as_("worker", "X"))
+    ok(trk, "claim", "release", t, *as_("worker", "X"))
     return t
 
 
@@ -416,6 +431,7 @@ def test_settle_fixed_needs_a_sha(trk, built):
 
 
 def contradiction(trk, t):
+    ok(trk, "claim", t, *as_("builder", "W"))
     return ok(trk, "ledger", "add", t, "--kind", "contradiction", "--decided", "Two journal rows", "--why", "Simpler",
               "--conflicts-with", "spec:Evidence", *as_("builder", "W"))
 
@@ -486,8 +502,8 @@ def test_ledger_list_and_show_carry_each_rows_latest_verdict_settlement_promotio
     ok(trk, "ledger", "verdict", built, "1", "wrong", "--note", "Stale reads", *as_("reviewer", "V"))
     ok(trk, "ledger", "settle", built, "1", "fixed", "--sha", FIX, *as_("builder", "W"))
     ok(trk, "ledger", "promote", built, "1", "--adr", "docs/adr/0003-cache.md")
-    ask = engineering_ask(trk, built, "1", answer=False)
     fork(trk, built, *as_("builder", "W"))
+    ask = engineering_ask(trk, built, "1", answer=False)
     first, second = rows(trk, built)
     assert (first["verdict"]["verdict"], first["settlement"]["sha"], first["promotion"]["adr"]) == (
         "wrong", FIX, "docs/adr/0003-cache.md")

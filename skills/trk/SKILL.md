@@ -109,13 +109,34 @@ stage and refuses with the missing list otherwise.
   --sha <head>` row and a passing `--kind test-run --gate built` at that head.
   Log every correctness-relevant fork as you go: `trk ledger add <id> --kind
   fork --decided … --alternative … --why …`.
+- **Your claim is the licence to write.** From a session, `evidence add` of a
+  `pr`, `test-run` or `merge`, `advance` past Framed, `blast-radius` and a
+  builder `ledger add` are refused unless you hold the ticket's live claim. With
+  none you get the refusal `claim` itself gives (`not-ready`, `claimed`,
+  `unclaimable`), or `not-claimed` when the claim would succeed: `trk claim <id>`
+  first. A lapsed lease is no claim. A write with no session (a person's terminal)
+  is not checked. Ledger rows cannot be edited; a row written wrongly is taken
+  out with `trk ledger withdraw <id> <n> --reason "…"`: never a row that has a
+  verdict, settlement, promotion, ask or a row correcting it. The builder (any
+  session that holds or ever held a claim on the ticket counts) withdraws only
+  rows its own session wrote, and only before any audit has begun; an auditor only its own
+  rows; the driver (a session that never built the ticket) a builder's row,
+  never an auditor's finding (an auditor row or a reward-hack flag); a person
+  any unjudged row. A withdrawn row stays listed, marked
+  withdrawn, on `ledger list` and the page, and no gate counts it. An open ask
+  on the ticket (the RED-read ask too) keeps it off the frontier but never
+  stops `trk claim <id>` or your writes, so claim again after `/clear`.
 - **Merged**: rate the diff with `trk blast-radius <id> [--base <branch point>] --as <actor>` (a write, not a query)
-  at the head. GREEN merges unreviewed; YELLOW also needs an independent audit
+  at the head (a change to `.trk/blast-radius` itself always rates RED; when the repo got `.trk/blast-radius` after the PR merged and a rating at the merge sha is refused
+  `no-blast-rules`, rate at a later commit that has the rules and contains the merge sha: `--sha <it> --base <branch point>`;
+  rate it after the `merge` row; a `--base` that already contains the merge or the PR head is refused `stale-base`).
+  A `--base` that starts after a commit of the PR itself (the PR head, a mid-PR commit) is refused `base-hides-pr`;
+  omit `--base` for a GitHub PR, or pass the commit the branch was cut from (rate before the PR merges). GREEN merges unreviewed; YELLOW also needs an independent audit
   and a verdict on every ledger row, with every RISKY/WRONG/contradiction
   settled; RED also needs a person's review recorded by that person: `trk review record <id> approved
   --sha <head> --note "…" --as <person>` (no GitHub; needs the RED rating and the open RED-read
-  ask; an agent actor is refused `approval-needs-person`). Record
-  `--kind merge --gate merged --ref <ref> --sha <merge sha>`. Rebase **before**
+  ask; an agent actor is refused `approval-needs-person`). A re-rating at the head that is no longer RED
+  withdraws the open RED-read ask itself. Record `--kind merge --gate merged --ref <ref> --sha <merge sha>`. Rebase **before**
   the audit: verdicts count only at an ancestor of the head. A ticket that
   changes no repo records `pr --ref none` and, once Built, runs `trk skip <id> merged
   --reason …`.
@@ -123,6 +144,10 @@ stage and refuses with the missing list otherwise.
   criterion (`test-run`, `webtester-run` or `human-accept`) at a sha containing
   the merge, then `trk advance <id> --outcome "<one sentence>"`, which closes it
   `done`. `close --resolution done` on a ticket is refused.
+- A red-first proof (a test run meant to fail, at a base before the fix) is recorded with `evidence add --kind
+  test-run --gate verified --criterion ac-<n> --sha <base> --red-first`, never as `--verdict pass`. `trk evidence`
+  lists it `failed as intended`; an ancestor of the merge is valid (no `wrong-sha`); it counts only beside a
+  passing run of the same criterion and never decides the criterion's status.
 - Write the `resolution` section (what landed, with the commit sha) before the
   final advance.
 - Going back: `trk reopen-stage <id> <stage> --reason …`; gates above then count
@@ -135,9 +160,14 @@ sound|risky|wrong --note …`. Settling: `ledger settle <id> <n> fixed --sha S`,
 `accepted|overruled --ask <A>` where A is an `engineering` ask tied to the row
 and answered by a person. A confirmed reward-hacking flag is only ever `fixed`.
 
-**RED tickets: write the review brief before you audit.** When the ticket's latest counting
+**RED tickets: write the review brief before you audit.** Michael's rule, 2026-10-24: "something rated red needs to have enough context and information that you know why it is red and what risk you are taking and what the consequences could be." The nine-heading brief is that context. A RED-read ask whose ticket has no complete brief is
+**held**: it stays open (and still blocks the ticket) but `trk waiting --me <approver>` and the Needs-you page leave it
+out, and a direct `trk review record <id> approved` is refused `no-brief` naming the missing headings. The asker sees
+it with `trk waiting --me <asker>` (or `--all`, text only) marked `[held: review brief missing: …]`; `--me <asker> --json`
+carries `held: <reason>` (`null` on a released ask), while `--all --json` leaves a held ask out, since hx routes every ask
+that lists; `trk show <ask>` says `held:`. Setting a complete `review-brief` releases it, and its wait clock starts then. An open RED-read ask is also held while no rating counts at the ticket's head: `rating-stale` after a newer `pr` row or a `reopen-stage` (its `red_read` stays, with `current` false), `rating-missing` after its `blast-radius` row is retracted or its sha cannot be placed. A counting `trk blast-radius` releases it. When the ticket's latest counting
 `blast-radius` row is RED, `ledger audit` is refused (`brief-required`, naming the missing headings) until the ticket
-has a `review-brief` section: `trk section set <id> review-brief --file F --as auditor`. It is the page the approving
+has a `review-brief` section: `trk section set <id> review-brief --file F --as auditor`, written by the auditor session itself (a driver never writes it under `--as auditor`). The command warns on stderr naming any heading still lacking (exit 0; `--json` carries `lacking`). It is the page the approving
 person reads instead of the diff, so write it as a junior engineer briefing a senior one. Nine headings, in this
 order, each with text: **Decision** (one sentence: change, PR, head sha) · **What changes and why** (the problem,
 citing the ruling or ticket) · **Why it's RED** (the blast-radius rule each RED file matched, what it protects) ·
@@ -145,7 +175,7 @@ citing the ruling or ticket) · **Why it's RED** (the blast-radius rule each RED
 probes run, audit verdicts, findings fixed or deferred) · **Rollback** (how to undo it, migrations included) ·
 **Decision criteria** ("approve if …", "hold if …") · **Where to look** (two to four file:line spots, plus questions
 only the approver can answer) · **Recommendation** (approve or hold, why, your confidence). The RED-read ask shows
-the brief above the file list and approve command (and "brief pending" until it is complete); editing the section
+the brief above the file list and approve command, headed with the actor and session that wrote it ("independent of the builder" only when that session differs from the builder's evidence sessions), or "brief pending" while it is held; editing the section
 refreshes the open ask. The Merged gate asks for the same brief while the latest counting rating is RED
 (`missing: review-brief (…headings)`), even if the audit came first or the brief was removed after it. YELLOW and
 GREEN need no brief.
@@ -159,9 +189,27 @@ GREEN need no brief.
   Spec'd. `trk spec draft <project> --reason …` sends it back.
 - Cut tickets only after acceptance; create them all, then wire `blocks` edges
   in a second pass.
-- Close a project or program `done` with one `--kind judgment --gate close
+- Close a project `done` with one `--kind judgment --gate close
   --criterion ac-<n> --verdict pass --note "<what delivered it>"` per live
   criterion, after every child is closed.
+- A **program** close is harder (tr-43mme): a `judgment` never counts. Each live
+  criterion needs a passing `test-run` or `webtester-run` with `--ref` and the
+  release `--sha`, or a `human-accept` from the actor the criterion names. A
+  criterion names its acceptor in its text: `accept-by: michael` or
+  `accept-by: security` (an actor id, or a role meaning whoever holds it now).
+  A `human-accept` on a criterion that names nobody, or from anyone else, does
+  not count. When the program closes, each deciding run is also read with
+  `gh run view` (never on `show`): its `--ref` must be a GitHub Actions run URL
+  (`https://github.com/<owner>/<repo>/actions/runs/<id>`), the run and the job
+  named by the program's `notes` (a plain `release-verify-job: <name>` line; a bullet, backticks and case are fine, bold, numbering, `#` or a second different line make it `unparsed`) or else by `trk config set release-verify-job <name>` must have concluded
+  `success` (a skipped job is not a success), and the run's head sha must be the
+  recorded release `--sha`, and the run must be of one of the program's repos
+  (its GitHub `origin`), from a push, workflow_dispatch or schedule on the repo's default branch, a `release/<one segment>` branch, or a tag at the run's commit (else `run-wrong-branch`), and that ref must be protected on GitHub in a way the token trk runs under cannot bypass: a ruleset with `current_user_can_bypass` `never` (a `pull_request` rule needs 1+ approval and stale-review dismissal; a release branch or tag also needs a `creation` rule), or, for the default branch only, classic protection with `enforce_admins`, strong required reviews and no `bypass_pull_request_allowances` (push restrictions never count; a release branch needs rulesets) (else `ref-unprotected`; unreadable rules are `sha-unverifiable`). Ask a person to add the ruleset. **Only a person names the job**: write the notes line yourself as a person, not from an agent session; an agent's notes edit that adds or changes the job, or `config set release-verify-job` from an agent (`job-needs-person`), leaves the close refused with a `release-verify-job` need (`reason` `unset`, `empty`, `unparsed` or `not-by-person`). `show` makes no `gh` call, so it lists `release-run-check` while a run is unread; `trk close` makes the check. A wrong run is a `release-run` need with its
+  `reason` (`run-wrong-repo`, `run-wrong-branch`, `run-not-success`, `job-not-success`, `run-wrong-sha`); an unset job
+  is a `release-verify-job` need; a run `gh` cannot read, or a ref that is not a
+  run URL, or a program with no repo that has a GitHub origin, is refused `sha-unverifiable`. A refused close lists the turned-away rows under `uncounted`, each
+  with its `reason` (`program-judgment`, `no-release-sha`, `no-acceptor-named`,
+  `not-acceptor`); `trk evidence <program>` shows the same reasons.
 
 ## 6. Asks: when you need a person
 
@@ -169,7 +217,15 @@ Open an ask instead of stopping:
 `trk ask <id> --to product|engineering|parent "<question title>" --question -`.
 The body stands alone for a reader with no context: one question, your
 recommendation with options, what it unblocks, items named by title and id.
-The item leaves the frontier until the ask closes. `trk waiting --json`
+For a multiple-choice question also pass `--option "<label>"` once per
+choice (numbered from 1 in the order given) and `--recommend N` for your
+recommendation. They are stored as a machine-readable `options` section
+(`trk section get <ask> options --json`), so a client can offer one-tap
+buttons; the question body is still required and stands alone. A person picks
+with `trk answer <ask> --option N [--answer -]` (outcome `Option N: <label>`,
+body the text given or else the label). Clients do not parse a prose
+"Options:" list, so use `--option` for choices and leave it off free-text
+questions. The item leaves the frontier until the ask closes. `trk waiting --json`
 (`--me A`, `--all`) lists open asks, highest `urgency.score` first (open items held up through `blocks` edges × a time factor that peaks near 60 minutes of waiting, ×10 if urgent; `urgency.base` is the score without the time factor); read an answer with `trk section get <ask>
 answer --json`. Withdraw one you no longer need with `trk withdraw <ask>
 --reason …`. `trk close` on an item with an open ask (its own or a descendant's)
@@ -179,7 +235,8 @@ first; a close never withdraws an ask (Michael's ruling tr-29kgp, 2026-10-22:
 A person's reply is only a proposed answer: it may not answer the question
 (Michael, 2026-10-23). When a client passes on a person's free text, such as a
 phone answer card, record it with `trk reply <ask> --as <person> --body -`. The
-ask stays open and the reply is listed as `reply-<n>` in the ask's `replies`.
+ask stays open and the reply is listed as `reply-<n>` in the ask's `replies`, with its full text as `body`.
+Every ask in `waiting --json` and `show --json` carries `rev` (latest journal seq touching it, replies included; a RED-read ask also counts its ticket) and `awaiting` (`asker` or `addressee`, by who wrote last; null once closed). An open RED-read ask also carries `red_read` `{ticket, sha, current, roles, files_count, brief, brief_lacking, brief_complete, brief_writer}`: `sha` is the full RED head to pass to `trk review record --sha`, `brief` the nine headings' text (or null), read by the gates' own parser. `current` is false after a newer `pr` head before a re-rating, or after `reopen-stage`. Show Approve only when `brief_complete` and `current`.
 The asker reads it, then either confirms it with `trk answer <ask>
 --from-comment reply-<n> --outcome …` or follows up with a `trk reply` of its
 own. The asker's own reply is never confirmable (rule `own-reply`). Use `trk

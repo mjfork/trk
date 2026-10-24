@@ -10,7 +10,7 @@ inside the functions that need it.
 import json
 import re
 
-from . import actors, clock, config, criteria, evidence, stages
+from . import actors, claims, clock, config, criteria, evidence, stages
 from .errors import gate_unmet, not_found, refused, usage
 
 KINDS = ("fork", "contradiction", "reward-hack")
@@ -86,13 +86,105 @@ def _open_ticket(conn, raw_id):
     return row
 
 
-def get(conn, item_id, raw_n):
-    """The ledger row `raw_n` names on a ticket; exit 3 when it has none."""
+def get(conn, item_id, raw_n, live=False):
+    """The ledger row `raw_n` names on a ticket; exit 3 when it has none. `live` also refuses a withdrawn
+    row (rule `ledger-withdrawn`): nothing is judged, settled or promoted once it is withdrawn."""
     n = number(raw_n)
     found = conn.execute("SELECT * FROM ledger WHERE item_id = ? AND n = ?", (item_id, n)).fetchone()
     if found is None:
         raise not_found(f"{item_id} has no {handle(n)}", item=item_id)
+    if live and withdrawal(conn, item_id, n) is not None:
+        raise refused("ledger-withdrawn", f"{handle(n)} of {item_id} is withdrawn", item=item_id)
     return found
+
+
+def withdrawal(conn, item_id, n):
+    """The row that withdrew ledger row `n`, or None."""
+    return conn.execute("SELECT * FROM ledger_withdrawals WHERE item_id = ? AND n = ?", (item_id, n)).fetchone()
+
+
+def _audit_begun(conn, item_id):
+    """Whether any audit has begun on a ticket: an `audit` evidence row, an auditor's ledger row or a verdict."""
+    return any(conn.execute(query, (item_id,)).fetchone() for query in (
+        "SELECT 1 FROM evidence WHERE item_id = ? AND kind = 'audit'",
+        "SELECT 1 FROM ledger WHERE item_id = ? AND origin = 'auditor'",
+        "SELECT 1 FROM ledger_verdicts WHERE item_id = ?"))
+
+
+def _audited_by(conn, item_id, session):
+    """Whether `session` audited the ticket: wrote an auditor row, a verdict or an `audit` row on it."""
+    return session is not None and any(conn.execute(query, (item_id, session)).fetchone() for query in (
+        "SELECT 1 FROM evidence WHERE item_id = ? AND kind = 'audit' AND session = ?",
+        "SELECT 1 FROM ledger WHERE item_id = ? AND origin = 'auditor' AND session = ?",
+        "SELECT 1 FROM ledger_verdicts WHERE item_id = ? AND session = ?"))
+
+
+def _claimed_by(conn, item_id, session):
+    """Whether `session` ever claimed the ticket, at any stage, live or ended."""
+    return session is not None and conn.execute("SELECT 1 FROM claims WHERE item_id = ? AND session = ?",
+                                                (item_id, session)).fetchone() is not None
+
+
+def _cited(conn, item_id, n):
+    """Whether another row of the ledger corrects ledger row `n` (`refers_to`) or repeats it (`repeat_of`)."""
+    return conn.execute("SELECT 1 FROM ledger WHERE (item_id = ? AND refers_to = ?) OR repeat_of = ?",
+                        (item_id, n, f"{item_id}:{n}")).fetchone() is not None
+
+
+def withdraw(tx, raw_id, raw_n, reason):
+    """`ledger withdraw`: take a row out of the ledger with a one-line reason, as `evidence retract` does for
+    evidence; the row stays listed, marked withdrawn, and no gate counts it. Ledger rows are added before Merged,
+    so they are withdrawn before it (`ledger-closed`). Refused: a row that has a verdict, settlement, promotion
+    or tied ask (`ledger-judged`: it has been looked at, and withdrawing it would dodge that), a row another
+    row corrects or repeats (`ledger-cited`) and a row already withdrawn (`ledger-withdrawn`). By writer:
+    the builder withdraws only rows its own session wrote (`not-own-row`) and only before any audit has begun
+    (`ledger-audited`; an auditor's row is `not-independent`); a session that holds or ever held a claim on
+    the ticket counts as the builder, at any stage; an auditor's row (origin `auditor`, or a reward-hacking flag) is withdrawn only by the
+    session that wrote it, or by a person (`not-own-row`); an auditor withdraws only its own rows
+    (`not-own-row`); any other session that never built the ticket (the driver) withdraws a builder's row, and
+    a person withdraws any row. The builder's session still counts as the builder after its row is withdrawn.
+    Returns the row's handle."""
+    reason = _line(reason, "--reason")
+    conn = tx.conn
+    row = _open_ticket(conn, raw_id)
+    if row["stage"] not in OPEN_STAGES:
+        raise refused("ledger-closed", f"{row['id']} is at {row['stage']}; ledger rows are withdrawn before Merged",
+                      item=row["id"])
+    entry = get(conn, row["id"], raw_n, live=True)
+    n = entry["n"]
+    if any(conn.execute(f"SELECT 1 FROM {table} WHERE item_id = ? AND n = ?", (row["id"], n)).fetchone()
+           for table in ("ledger_verdicts", "ledger_settlements", "ledger_promotions", "ledger_asks")):
+        raise refused("ledger-judged", f"{handle(n)} of {row['id']} has a verdict, settlement, promotion or tied "
+                      "ask; it cannot be withdrawn", item=row["id"])
+    if _cited(conn, row["id"], n):
+        raise refused("ledger-cited", f"{handle(n)} of {row['id']} is corrected or repeated by another row; it "
+                      "cannot be withdrawn", item=row["id"])
+    if is_builder(conn, row["id"], tx.session, tx.actor) or _claimed_by(conn, row["id"], tx.session):
+        if entry["origin"] == "auditor":
+            raise refused("not-independent", f"{tx.actor} built {row['id']}; withdrawing an auditor row needs an "
+                          "independent session", item=row["id"])
+        if _audit_begun(conn, row["id"]):
+            raise refused("ledger-audited", f"{row['id']} has been audited; the builder can no longer withdraw "
+                          f"{handle(n)}: ask the driver", item=row["id"])
+        if entry["session"] != tx.session:
+            raise refused("not-own-row", f"session {tx.session} built {row['id']}; the builder withdraws only rows "
+                          f"its own session wrote, and {handle(n)} is not its own", item=row["id"])
+    elif tx.session is None:
+        if actors.kind(conn, tx.actor) != "human":
+            raise refused("session-required", "withdrawing a ledger row needs a session (--session or "
+                          "$TRK_SESSION) unless a person writes", item=row["id"])
+    elif entry["session"] != tx.session and (entry["origin"] == "auditor" or entry["kind"] == "reward-hack"):
+        raise refused("not-own-row", f"{handle(n)} of {row['id']} is an auditor's finding; only the session that "
+                      "wrote it, or a person, withdraws it", item=row["id"])
+    elif _audited_by(conn, row["id"], tx.session) and entry["session"] != tx.session:
+        raise refused("not-own-row", f"session {tx.session} audited {row['id']}; an auditor withdraws only its "
+                      f"own rows, and {handle(n)} is not its own", item=row["id"])
+    seq = _journal(tx, "ledger.withdrawn", row, {"ledger": handle(n), "n": n, "kind": entry["kind"],
+                                                "reason": _excerpt(reason)})
+    conn.execute("INSERT INTO ledger_withdrawals (item_id, n, reason, actor, session, seq, created_at)"
+                 " VALUES (?, ?, ?, ?, ?, ?, ?)", (row["id"], n, reason, tx.actor, tx.session, seq,
+                                                  clock.stamp(tx.now)))
+    return handle(n)
 
 
 def _exists(conn, item_id, n):
@@ -239,6 +331,8 @@ def add(tx, raw_id, kind, *, decided, alternatives=(), why, would_have_asked=Non
         repeat_of = f"{repeated['item_id']}:{repeated['n']}"
     if origin == "auditor":
         check_independent(tx, row, "an auditor row")
+    else:
+        claims.require_held(tx, row, "a builder ledger row")
     n = conn.execute("SELECT coalesce(max(n), 0) + 1 FROM ledger WHERE item_id = ?", (row["id"],)).fetchone()[0]
     conn.execute(
         "INSERT INTO ledger (item_id, n, kind, decided, alternatives, why, would_have_asked, conflicts_with, files,"
@@ -256,6 +350,10 @@ def add(tx, raw_id, kind, *, decided, alternatives=(), why, would_have_asked=Non
         "refers_to": handle(refers) if refers else None, "sha": sha})
     if repeat_of is not None:
         _file_template(tx, row, n, decided, repeated, topic)
+    if origin == "builder":  # a new builder session: an open RED-read ask's byline may change
+        from . import items
+
+        items.refresh_builder_asks(tx, row["id"])
     return handle(n)
 
 
@@ -317,7 +415,7 @@ def verdict(tx, raw_id, raw_n, value, note, sha=None):
     sha = evidence.check_sha(sha) if sha is not None else None
     conn = tx.conn
     row = _open_ticket(conn, raw_id)
-    entry = get(conn, row["id"], raw_n)
+    entry = get(conn, row["id"], raw_n, live=True)
     if value not in VERDICTS[entry["kind"]]:
         raise usage(f"a {entry['kind']} row takes {' or '.join(VERDICTS[entry['kind']])}, not {value}")
     check_independent(tx, row, "a verdict")
@@ -374,7 +472,7 @@ def settle(tx, raw_id, raw_n, settlement, *, sha=None, ask=None, adr=None, note=
     note = _line(note, "--note", required=False)
     conn = tx.conn
     row = _open_ticket(conn, raw_id)
-    entry = get(conn, row["id"], raw_n)
+    entry = get(conn, row["id"], raw_n, live=True)
     latest = _settling_verdict(conn, row, entry)
     if settlement != "fixed" and latest is not None and latest["verdict"] == "confirmed":
         raise refused("reward-hack-final", f"{handle(entry['n'])} of {row['id']} is a confirmed reward-hacking flag; "
@@ -541,7 +639,7 @@ def promote(tx, raw_id, raw_n, adr):
     adr = _line(adr, "--adr")
     conn = tx.conn
     row = ticket(conn, raw_id)
-    entry = get(conn, row["id"], raw_n)
+    entry = get(conn, row["id"], raw_n, live=True)
     if actors.kind(conn, tx.actor) != "human":
         raise refused("human-only", f"{tx.actor} is an agent; only a person promotes a ledger row to an ADR",
                       item=row["id"])
@@ -587,6 +685,7 @@ def rows_json(conn, item_id):
             "promotion": _latest(conn, "ledger_promotions", item_id, n, "adr, actor, session, seq, created_at"),
             "asks": [{"id": a["id"], "title": a["title"], "status": a["status"],
                       "resolution": items.RESOLUTION_OUT.get(a["resolution"])} for a in asks],
+            "withdrawn": _latest(conn, "ledger_withdrawals", item_id, n, "reason, actor, session, seq, created_at"),
         })
     return result
 
@@ -605,6 +704,8 @@ def line(entry):
         marks.append("noise")
     text = "  ".join(marks) + f"  {entry['decided']}"
     after = []
+    if entry["withdrawn"]:
+        after.append(f"withdrawn: {entry['withdrawn']['reason']}")
     if entry["verdict"]:
         after.append(f"verdict {entry['verdict']['verdict']}")
     if entry["settlement"]:
@@ -652,7 +753,9 @@ def review_needs(conn, row, weighing):
     audits = [r for r in weighing.rows if r["kind"] == "audit" and r["gate"] == "merged" and r["counts"]]
     missing = [] if any(independent(r) for r in audits) else [{"need": "audit"}]
     repos, head = gitrepo.repos_of(conn, row["id"]), weighing.head
-    for entry in conn.execute("SELECT n, kind FROM ledger WHERE item_id = ? ORDER BY n", (row["id"],)).fetchall():
+    for entry in conn.execute("SELECT n, kind FROM ledger WHERE item_id = ? AND NOT EXISTS (SELECT 1 FROM"
+                              " ledger_withdrawals w WHERE w.item_id = ledger.item_id AND w.n = ledger.n) ORDER BY n",
+                              (row["id"],)).fetchall():
         label = handle(entry["n"])
         verdicts, stuck, outside = verdicts_at_head(conn, row["id"], entry["n"], repos, head, independent)
         if stuck and (not verdicts or stuck[-1]["seq"] > verdicts[-1]["seq"]):

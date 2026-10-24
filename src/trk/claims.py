@@ -126,7 +126,9 @@ def take_next(tx, session, root=None, owner=None, lease=None):
     return _take(tx, rows[0], session, lease, force=False) if rows else None
 
 
-def _take(tx, row, session, lease, force):
+def _refusal(tx, row, held, session, force):
+    """Raise the refusal a claim by `session` would meet (`take`'s checks, in its order); return whether the
+    item is a program claimed by force. Returns when the claim would be granted."""
     from . import ready
 
     item_id = row["id"]
@@ -134,19 +136,47 @@ def _take(tx, row, session, lease, force):
         raise refused("unclaimable", f"{item_id} is closed", item=item_id)
     if row["form"] == "ask":
         raise refused("unclaimable", f"{item_id} is an ask", item=item_id)
-    held = live(tx.conn, item_id)
     if held is not None and held["session"] != session:
         raise conflict("claimed", f"{item_id} is claimed by session {held['session']} ({held['actor']})"
                        f" until {held['lease_until']}", item=item_id)
     if held is not None:
-        _renew(tx, held, lease)
-        return item_id
+        return False
     forced = row["kind"] == "program"
     if forced and not force:
         raise refused("unclaimable", f"{item_id} is a program; only --force claims one", item=item_id)
-    why_not = ready.status(tx.conn, row)["why_not"]
+    # An ask on the ticket keeps it off the frontier, not out of its builder's hands: the RED-read ask is open
+    # while the builder's lease lapses, and a fresh session must still claim and write (tr-zn1dk).
+    why_not = [rule for rule in ready.status(tx.conn, row)["why_not"] if not rule.startswith("open-ask:")]
     if why_not and not forced:
         raise refused("not-ready", f"{item_id} is not ready: {', '.join(why_not)}", item=item_id)
+    return forced
+
+
+def require_held(tx, row, doing):
+    """A builder's write needs the writer's claim on the ticket (tr-zn1dk). Passes for a writer with no session
+    (a person's terminal) and for the session holding the live claim. Otherwise it raises what `claim` would
+    raise for this writer (`unclaimable`, `claimed`, `not-ready`), and rule `not-claimed` when the claim would
+    be granted: take it first. `doing` names the write in that message."""
+    if not tx.session:
+        return
+    expire(tx)
+    held = live(tx.conn, row["id"])
+    if held is not None and held["session"] == tx.session:
+        return
+    _refusal(tx, row, held, tx.session, force=False)
+    raise refused("not-claimed", f"{doing} needs your claim on {row['id']}, and session {tx.session} holds none: "
+                  f"`trk claim {row['id']}` first", item=row["id"])
+
+
+def _take(tx, row, session, lease, force):
+    from . import items, ledger
+
+    item_id = row["id"]
+    held = live(tx.conn, item_id)
+    forced = _refusal(tx, row, held, session, force)
+    if held is not None:
+        _renew(tx, held, lease)
+        return item_id
     minutes = lease or int(tx.store.meta("lease_minutes"))
     now = clock.stamp(tx.now)
     cursor = tx.conn.execute(
@@ -154,6 +184,8 @@ def _take(tx, row, session, lease, force):
         (item_id, session, tx.actor, minutes, now, _until(tx.now, minutes)),
     )
     _journal(tx, "claim.taken", _by_id(tx.conn, cursor.lastrowid), data={"forced": forced})
+    if row["stage"] in ledger.PRE_BUILT:  # a claim before Built makes the claimant a builder
+        items.refresh_builder_asks(tx, item_id)
     return item_id
 
 

@@ -131,7 +131,7 @@ def test_roles_set_prints_the_role_line(store):
 def test_config_lists_the_settings(store):
     assert store("config", "--json").json() == {"schema": 1, "config": {
         "default-actor": "michael", "default-owner": "michael", "id-prefix": "tr", "lease-minutes": "60",
-        "shared-agent": "worker", "template-parent": None,
+        "release-verify-job": None, "shared-agent": "worker", "template-parent": None,
     }}
     assert "default-owner  michael" in store("config").out.splitlines()
 

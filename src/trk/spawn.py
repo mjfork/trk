@@ -43,7 +43,7 @@ def after_commit(st):
     It never fails the write: a flusher that cannot start is noted in flusher.log, and the timer
     catches its pages up."""
     try:
-        if not (st.meta("publish_backend") or st.meta("publish_base_url")) or live_flusher(st.dir) is not None:
+        if not st.meta("publish_backend") or live_flusher(st.dir) is not None:
             return
         launch(st.dir)
     except Exception as exc:  # noqa: BLE001 - the write has committed; nothing here may undo or fail it

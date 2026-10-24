@@ -380,8 +380,11 @@ def insert(tx, kind, title, *, form=None, subtype=None, parent_id=None, where="l
          "draft" if kind == "project" else None, jira_url, now, now, addressee_role, asker, client),
     )
     _insert_repos(conn, item_id, repos)
+    from . import release
+
     for handle, body in section_bodies:
         sections.put(conn, item_id, handle, body, tx.now)
+        release.attest(tx, item_id, handle, None, body)
     return item_id, rank
 
 
@@ -600,12 +603,16 @@ def journal_updated(tx, item_id, fields, old, new):
 
 def set_section(tx, raw_id, handle, body):
     """Write one section; journals `item.updated` with field `section:<handle>` and no values, unless unchanged."""
+    from . import release
+
     sections.check_handle(handle)
     item_id = sections.check_written(get(tx.conn, raw_id), handle)
     sections.check_body(handle, body, item=item_id)
     if sections.body(tx.conn, item_id, handle) == body:
         return item_id
+    old = sections.body(tx.conn, item_id, handle)
     sections.put(tx.conn, item_id, handle, body, tx.now)
+    release.attest(tx, item_id, handle, old, body)
     journal_updated(tx, item_id, [f"section:{handle}"], {}, {})
     _refresh_red_asks(tx, item_id, handle)
     return item_id
@@ -613,10 +620,14 @@ def set_section(tx, raw_id, handle, body):
 
 def remove_section(tx, raw_id, handle):
     """Remove one section, journaled like a write; removing an absent one changes nothing."""
+    from . import release
+
     sections.check_handle(handle)
     item_id = sections.check_written(get(tx.conn, raw_id), handle)
+    old = sections.body(tx.conn, item_id, handle)
     if not sections.delete(tx.conn, item_id, handle):
         return item_id
+    release.attest(tx, item_id, handle, old, None)
     journal_updated(tx, item_id, [f"section:{handle}"], {}, {})
     _refresh_red_asks(tx, item_id, handle)
     return item_id
@@ -624,10 +635,20 @@ def remove_section(tx, raw_id, handle):
 
 def _refresh_red_asks(tx, item_id, handle):
     """A ticket's `review-brief` changed: its open RED-read asks show the new text."""
+    from . import blast
+
+    if handle == blast.BRIEF_HANDLE:
+        refresh_builder_asks(tx, item_id)
+
+
+def refresh_builder_asks(tx, item_id):
+    """Rewrite a ticket's open RED-read asks from the record as it is now: its `review-brief` changed, or
+    its builder record did (`pr`/`test-run` evidence, a `builder` ledger row, a claim before Built), which
+    changes who the brief's byline may call independent."""
     from . import blast, stages
 
     row = get(tx.conn, item_id)
-    if handle == blast.BRIEF_HANDLE and stages.is_ticket(row):
+    if stages.is_ticket(row):
         blast.refresh_red_asks(tx, row)
 
 
@@ -754,12 +775,14 @@ def _open_asks_below(conn, item_id):
 
 def _check_close_gate(conn, row):
     """Closing a project, program or decision `done` needs gate `close` (rule `gate-unmet` otherwise)."""
-    from . import stages
+    from . import release, stages
 
     if stages.closes_gated(row):
-        missing = stages.gate(conn, row, "close")
+        # `release-run-check` is `show`'s stand-in for the run check made just below
+        missing = [m for m in stages.gate(conn, row, "close") if m["need"] != release.PENDING]
         if missing:
             raise gate_unmet(row["id"], "close", missing)
+        release.verify(conn, row)  # a program's run evidence is read against its run (gh) only when it closes
 
 
 def mark_closed(tx, item_id, resolution, outcome):

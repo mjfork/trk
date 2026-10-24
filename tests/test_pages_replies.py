@@ -43,7 +43,7 @@ def test_ac1_a_comment_on_the_box_is_a_reply_and_the_ask_stays_open_and_blocking
     shown = item(trk, a)
     assert shown["status"] == "open"
     assert shown["replies"] == [{"comment": c, "actor": "kim", "at": replied["at"],
-                                 "excerpt": "Metres. SI everywhere. Thanks."}]
+                                 "excerpt": "Metres. SI everywhere. Thanks.", "body": None}]
     assert f"open-ask:{a}" in item(trk, asked["D"])["why_not"]
     assert [w["id"] for w in trk("waiting", "--me", "kim", "--json").json()["asks"]] == [a]
     assert replies(fake, c) == [(RECEIVED, "assistant")]

@@ -5,9 +5,9 @@ an approval answers the ask as a proxy answer by evidence, and Merged for a RED 
 Every test runs against a real throwaway git repo whose rules file makes `contract/**` RED. Every journal
 row a test writes is checked against `contract/changes.schema.json` by the suite's fixture."""
 
-from gated import commit
+from gated import commit, git
 from test_blast_and_verified import (DEST, RULES, accept, blast, feed, head, item, lane_repo, lane_ticket, merge,
-                                     new_ticket, ok, pr, refusal, run)
+                                     new_ticket, ok, pr, refusal, run, write_brief)
 
 PR = "https://github.com/o/r/pull/1"
 REVIEW = "https://github.com/o/r/pull/1#pullrequestreview-1"
@@ -19,6 +19,16 @@ def red_ticket(trk, tmp_path):
     t7 = lane_ticket(trk, path, sha)
     ok(trk, "actor", "add", "worker", "--kind", "agent")
     return path, sha, t7
+
+
+def land_and_extend(trk, path, t, sha):
+    """The part of the PR rated so far lands on `main`, and the PR gains one GREEN commit: rating against `main` now
+    shows only that commit, as it would for a PR whose RED file went in elsewhere. (A `--base` at the head, or at a
+    commit in the middle of the PR, hides the PR and is refused `base-hides-pr`.) Returns the new head."""
+    git(path, "branch", "-f", "main", sha)
+    new = commit(path, "docs/z.md")
+    pr(trk, t, new)
+    return new
 
 
 def asks_under(trk, item_id):
@@ -96,6 +106,7 @@ def rated_red_ticket(trk, tmp_path):
 def test_a_direct_approval_needs_no_ref_and_answers_the_ask_at_the_head(trk, tmp_path):
     _, sha, t7, ask = rated_red_ticket(trk, tmp_path)
     merge(trk, t7, sha)
+    write_brief(trk, t7)  # a direct approval needs the complete review-brief (tr-4bhay)
     since = head(trk)
     approved = ok(trk, "review", "record", t7, "approved", "--sha", sha, "--note", "x", "--as", "michael")
     row = next(e for e in trk("evidence", t7, "--json").json()["evidence"] if e["id"] == approved)
@@ -124,6 +135,7 @@ def test_a_direct_review_stores_the_full_head_when_the_pr_row_holds_a_short_sha(
     ok(trk, "advance", t)
     ok(trk, "blast-radius", t, "--as", "worker")
     [ask] = asks_under(trk, t)
+    write_brief(trk, t)
     approved = ok(trk, "review", "record", t, "approved", "--sha", sha[:7], "--note", "x", "--as", "michael")
     row = next(e for e in trk("evidence", t, "--json").json()["evidence"] if e["id"] == approved)
     assert (row["ref"], row["sha"], row["counts"]) == (f"direct:michael@{sha}", sha, True)
@@ -133,6 +145,7 @@ def test_a_direct_review_stores_the_full_head_when_the_pr_row_holds_a_short_sha(
 def test_a_direct_review_takes_a_short_sha_but_needs_one(trk, tmp_path):
     _, sha, t7, _ = rated_red_ticket(trk, tmp_path)
     assert trk("review", "record", t7, "approved", "--note", "x", "--as", "michael").code == 2
+    write_brief(trk, t7)
     ok(trk, "review", "record", t7, "approved", "--sha", sha[:7], "--note", "x", "--as", "michael")
     row = trk("evidence", t7, "--json").json()["evidence"][-1]
     assert (row["ref"], row["sha"]) == (f"direct:michael@{sha}", sha)
@@ -308,6 +321,77 @@ def test_ac2_a_re_rating_at_the_same_head_leaves_the_question_unchanged(trk, tmp
     ok(trk, "blast-radius", t7, "--as", "worker")
     assert ok(trk, "section", "get", ask["id"], "question") == before
     assert "item.updated" not in [r["change"] for r in feed(trk, since)]
+
+
+# --- a re-rating withdraws the RED-read asks that no longer apply (tr-8zevz) ---
+
+def test_a_re_rating_to_green_withdraws_the_open_red_read_ask_and_unblocks_close_and_verified(trk, tmp_path):
+    path, sha, t7 = red_ticket(trk, tmp_path)
+    ok(trk, "blast-radius", t7, "--as", "worker")
+    [ask] = asks_under(trk, t7)
+    since = head(trk)
+    new = land_and_extend(trk, path, t7, sha)
+    since = head(trk)
+    assert ok(trk, "blast-radius", t7, "--base", "main", "--as", "worker") == "green"
+    stale = item(trk, ask["id"])
+    assert (stale["status"], stale["resolution"]) == ("closed", "wont-do")
+    assert stale["outcome"].startswith("withdrawn: re-rated GREEN at ") and new[:7] in stale["outcome"]
+    rows = feed(trk, since)
+    assert [r["change"] for r in rows] == ["evidence.added", "ask.withdrawn"]
+    assert rows[1]["actor"] == "worker" and rows[1]["item"] == ask["id"]
+    assert item(trk, t7)["open_asks"] == []
+
+
+def test_a_re_rating_to_yellow_withdraws_the_open_red_read_ask(trk, tmp_path):
+    path, _ = lane_repo(tmp_path, {".trk/blast-radius": "RED contract/**\nYELLOW docs/**\n"},
+                        ["contract/x.json", "docs/y.md"])
+    t7 = lane_ticket(trk, path, git(path, "rev-parse", "HEAD"))
+    ok(trk, "actor", "add", "worker", "--kind", "agent")
+    assert ok(trk, "blast-radius", t7, "--as", "worker") == "red"
+    [ask] = asks_under(trk, t7)
+    git(path, "branch", "-f", "main", "HEAD~1")  # the RED file lands on main; the PR keeps its YELLOW one
+    assert ok(trk, "blast-radius", t7, "--base", "main", "--as", "worker") == "yellow"
+    assert "re-rated YELLOW" in item(trk, ask["id"])["outcome"]
+    assert item(trk, ask["id"])["status"] == "closed"
+
+
+def test_a_re_rating_that_is_still_red_keeps_the_open_ask(trk, tmp_path):
+    _, sha, t7 = red_ticket(trk, tmp_path)
+    ok(trk, "blast-radius", t7, "--as", "worker")
+    ok(trk, "blast-radius", t7, "--as", "worker")
+    assert [a["status"] for a in asks_under(trk, t7)] == ["open"]
+
+
+def test_a_re_rating_at_a_sha_that_is_not_the_head_withdraws_nothing(trk, tmp_path):
+    path, sha, t7 = red_ticket(trk, tmp_path)
+    ok(trk, "blast-radius", t7, "--as", "worker")
+    git(path, "checkout", "-q", "-b", "elsewhere", "main")
+    later = commit(path, "docs/z.md")  # a GREEN commit that is not the PR's head
+    assert ok(trk, "blast-radius", t7, "--sha", later, "--as", "worker") == "green"
+    assert [a["status"] for a in asks_under(trk, t7)] == ["open"]
+
+
+def test_a_re_rating_withdraws_only_the_ask_of_a_role_with_no_RED_file_left(trk, tmp_path):
+    _, t = role_ticket(trk, tmp_path, "RED:product **/accepted-rulings.json\nRED contract/**\n")
+    path = str(tmp_path / "L")
+    ok(trk, "blast-radius", t, "--as", "worker")
+    by_role = {a["addressee_role"]: a["id"] for a in asks_under(trk, t)}
+    assert sorted(by_role) == ["engineering", "product"]
+    git(path, "branch", "-f", "main", "HEAD~1")  # the product file lands on main; the PR keeps contract/x.json
+    assert ok(trk, "blast-radius", t, "--base", "main", "--as", "worker") == "red"
+    assert item(trk, by_role["product"])["status"] == "closed"
+    assert item(trk, by_role["engineering"])["status"] == "open"
+
+
+def test_an_answered_ask_is_not_touched_by_a_re_rating(trk, tmp_path):
+    path, sha, t7 = red_ticket(trk, tmp_path)
+    ok(trk, "blast-radius", t7, "--as", "worker")
+    [ask] = asks_under(trk, t7)
+    merge(trk, t7, sha)
+    review(trk, t7, sha, "approved", "--as", "michael")
+    land_and_extend(trk, path, t7, sha)
+    assert ok(trk, "blast-radius", t7, "--base", "main", "--as", "worker") == "green"
+    assert (item(trk, ask["id"])["resolution"]) == "done"
 
 
 # --- a RED rule names the role that reviews it ---

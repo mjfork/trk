@@ -40,11 +40,39 @@ def resolve(conn, ask):
 
 
 def fields(conn, row):
-    """The keys item JSON adds for an ask."""
+    """The keys item JSON adds for an ask: `rev` and `awaiting` on every ask, and `red_read` on an open RED-read one."""
+    from . import blast
+
     addressee = resolve(conn, row)
-    return {"addressee_role": row["addressee_role"], "addressee": addressee,
-            "addressee_kind": actors.kind(conn, addressee), "asker": row["asker"], "ledger": _tied(conn, row["id"]),
-            "replies": replies(conn, row)}
+    replied = replies(conn, row)
+    found = {"addressee_role": row["addressee_role"], "addressee": addressee,
+             "addressee_kind": actors.kind(conn, addressee), "asker": row["asker"], "ledger": _tied(conn, row["id"]),
+             "replies": replied, "rev": rev(conn, row), "awaiting": awaiting(row, replied)}
+    red_read = blast.red_read_json(conn, row)
+    if red_read is not None:
+        found["red_read"] = red_read
+    return found
+
+
+def rev(conn, row):
+    """The latest journal seq touching the ask: every row whose item is the ask, `ask.replied` rows included (a
+    reply leaves `updated_at` alone). An open RED-read ask also counts its ticket's rows, since the ask shows the
+    ticket's rating and brief. A client sends it back with an action to have a stale one refused."""
+    from . import blast
+
+    ids = [row["id"]]
+    if row["status"] == "open" and row["title"].startswith(blast.RED_ASK_TITLE):
+        ids.append(row["parent_id"])
+    marks = ",".join("?" * len(ids))
+    return conn.execute(f"SELECT COALESCE(MAX(seq), 0) FROM journal WHERE item IN ({marks})", ids).fetchone()[0]
+
+
+def awaiting(row, replied):
+    """Who must act next: `asker` when the latest reply since the opening is by anyone but the asker (the
+    asker reads it, then confirms or follows up), else `addressee`; None once the ask is closed."""
+    if row["status"] != "open":
+        return None
+    return "asker" if replied and replied[-1]["actor"] != row["asker"] else "addressee"
 
 
 def _tied(conn, ask_id):
@@ -78,16 +106,56 @@ def check_addressable(conn, role, blocked_id, asker, *, item):
                       item=item)
 
 
-def open_ask(tx, parent, role, title, question, *, urgent=False, where="last", anchor=None, ledger=None):
+OPTION_LABEL_MAX = 200  # leaves room for "Option N: " inside an outcome's 300
+
+
+def options_body(labels, recommended):
+    """The `options` section's JSON for an ask given `labels` (in order, numbered from 1) and the
+    1-based `recommended` option or None; None when there are no labels. A usage error for an empty or
+    multi-line label, or a `--recommend` that names no option."""
+    labels = [label.strip() for label in labels or ()]
+    if not labels:
+        if recommended is not None:
+            raise usage("--recommend names one of the --option labels; give at least one --option")
+        return None
+    for label in labels:
+        if not label or "\n" in label or "\r" in label:
+            raise usage("an --option label is one non-empty line")
+        if len(label) > OPTION_LABEL_MAX:
+            raise usage(f"an --option label is at most {OPTION_LABEL_MAX} chars (got {len(label)})")
+    if recommended is not None and not 1 <= recommended <= len(labels):
+        raise usage(f"--recommend {recommended} is out of range: {len(labels)} option(s) given, numbered from 1")
+    return json.dumps({"options": [{"n": n, "label": label} for n, label in enumerate(labels, 1)],
+                       "recommended": recommended}, ensure_ascii=False)
+
+
+def options(conn, ask_id):
+    """The ask's parsed `options` section (`{"options": [{n, label}…], "recommended": N|None}`), or None."""
+    text = sections.body(conn, ask_id, "options")
+    if text is None:
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None  # a hand-written section that is not ours: no one-tap answer, free text still works
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("options"), list):
+        return None
+    return parsed
+
+
+def open_ask(tx, parent, role, title, question, *, urgent=False, where="last", anchor=None, ledger=None,
+             option_labels=(), recommended=None):
     """Open an ask under `parent`, addressed to `role`, with the writing actor as asker. Returns its id.
 
     The question is required and non-empty (usage error). Refusals run in the spec's order: unknown
     parent (exit 3), `parent-closed`, `ask-leaf`, `unknown-role`, then `self-addressed`. `ledger` ties
     the ask to that ledger row of its parent ticket (usage error when the parent has no such row).
-    Journals one `ask.opened` row instead of `item.created`.
+    `option_labels` and `recommended` store an `options` section beside the question (usage error for a
+    `recommended` that names none). Journals one `ask.opened` row instead of `item.created`.
     """
     if question is None or not question.strip():
         raise usage("an ask needs a non-empty question: --question @file or --question -")
+    options_text = options_body(option_labels, recommended)
     title = items.check_title(title)
     sections.check_body("question", question)
     conn = tx.conn
@@ -99,8 +167,9 @@ def open_ask(tx, parent, role, title, question, *, urgent=False, where="last", a
         from . import ledger as ledger_rows  # a gates module, loaded only for --ledger; `ledger` is the row given
 
         ledger_n = ledger_rows.tie_target(conn, parent_row, ledger)
+    bodies = [("question", question)] + ([("options", options_text)] if options_text else [])
     item_id, rank = items.insert(tx, "work_item", title, form="ask", parent_id=parent_row["id"], where=where,
-                                 anchor=anchor, urgent=urgent, section_bodies=[("question", question)],
+                                 anchor=anchor, urgent=urgent, section_bodies=bodies,
                                  addressee_role=role, asker=tx.actor)
     if ledger is not None:
         ledger_rows.tie(conn, parent_row["id"], ledger_n, item_id)
@@ -206,6 +275,30 @@ def answer(tx, raw_id, outcome, body):
     return item_id
 
 
+def answer_option(tx, raw_id, number, body):
+    """Answer an open ask with option `number`: the outcome is `Option N: <label>`, the body `body` when given,
+    else the label. Refused when the ask has no `options` section (rule `no-options`) or `number` is not
+    one of its numbers (rule `bad-option`); otherwise as `answer`."""
+    conn = tx.conn
+    row = open_row(conn, raw_id)
+    listed = options(conn, row["id"])
+    if listed is None:
+        raise refused("no-options", f"{row['id']} has no options; answer with --outcome and --answer", item=row["id"])
+    chosen = {o.get("n"): o.get("label") for o in listed["options"] if isinstance(o, dict)}
+    if number not in chosen:
+        raise refused("bad-option", f"{row['id']} has options {', '.join(map(str, sorted(chosen)))}, not {number}",
+                      item=row["id"])
+    label = chosen[number]
+    outcome = items.check_outcome(f"Option {number}: {label}", "an option needs a label")
+    if body is not None and not body.strip():
+        raise usage("an answer needs a non-empty body: --answer @file or --answer -")
+    text = label if body is None else body
+    sections.check_body("answer", text)
+    check_permission(conn, row, tx.actor, "answer", ("addressee", "human"))
+    _close_answered(tx, row, outcome, text, proxy=tx.actor != resolve(conn, row), source={"via": "cli"})
+    return row["id"]
+
+
 def answer_by_evidence(tx, row, outcome, body, evidence_id):
     """The proxy answer by evidence (spec 03, Amendments to Asks and owners): a `human-review` pass
     answers a ticket's open RED-read ask `row` whoever records it, a named exception to `answer`'s
@@ -262,8 +355,10 @@ def _replied_since_opening(conn, item_id):
 
 
 def replies(conn, row):
-    """An ask's replies since its latest opening, oldest first: {comment, actor, at, excerpt}."""
-    return [{"comment": data["comment_id"], "actor": r["actor"], "at": r["at"], "excerpt": data["excerpt"]}
+    """An ask's replies since its latest opening, oldest first: {comment, actor, at, excerpt, body}; `body` is
+    the full text where trk holds it (`trk reply`), None for a page comment (the page holds it)."""
+    return [{"comment": data["comment_id"], "actor": r["actor"], "at": r["at"], "excerpt": data["excerpt"],
+             "body": data.get("body")}
             for r in _replied_since_opening(conn, row["id"]) for data in (json.loads(r["data"]),)]
 
 
@@ -526,11 +621,20 @@ def held_up(conn, ask):
 def waiting_since(conn, row):
     """When an ask last started waiting: its latest `ask.opened` or `ask.reopened` row, or `ask.readdressed`
     row whose cause is `readdress` (the asker's own `trk readdress`). A re-route that only follows a role, owner
-    or move change (cause `role-set`, `owner-changed`, `moved`) leaves the asker's prompt cache as it was."""
+    or move change (cause `role-set`, `owner-changed`, `moved`) leaves the asker's prompt cache as it was.
+    A RED-read ask is held until its ticket's brief is complete, so its wait also starts no earlier than that
+    ticket's latest `review-brief` write (read from the journal) while the brief is complete."""
     latest = conn.execute("SELECT at FROM journal WHERE item = ? AND (change IN ('ask.opened', 'ask.reopened')"
                           " OR (change = 'ask.readdressed' AND json_extract(data, '$.cause') = 'readdress'))"
                           " ORDER BY seq DESC LIMIT 1", (row["id"],)).fetchone()
-    return latest["at"] if latest else row["created_at"]
+    since = latest["at"] if latest else row["created_at"]
+    from . import blast  # a gates module: loaded only when an ask's wait is read
+
+    if not row["title"].startswith(blast.RED_ASK_TITLE):
+        return since
+    parent = items.get(conn, row["parent_id"])
+    written = blast.brief_written_at(conn, parent["id"]) if blast.brief_complete(conn, parent) else None
+    return max(since, written) if written else since  # a RED-read ask waits on no one until its brief is complete
 
 
 def age_text(seconds):
@@ -560,22 +664,41 @@ def urgency(conn, row, now, as_of=False):
             "reason": reason}
 
 
-def waiting(conn, me=None, root=None, client=None, now=None):
+def held_reason(conn, row):
+    """Why an open ask is held back from its addressee, or None: a RED-read ask whose ticket has no complete
+    review brief (`blast.held_reason`). A held ask stays open and still blocks its ticket."""
+    from . import blast  # a gates module: loaded only when an ask is listed
+
+    return blast.held_reason(conn, row)
+
+
+def waiting(conn, me=None, root=None, client=None, now=None, with_held=False):
     """Open ask rows whose role resolves to `me` (every open ask when `me` is None), under `root`
     (an item id; the ask itself counts) when given, and whose effective client is `client` when given.
-    Highest urgency score first at `now` (the clock's when omitted), then by id."""
-    return [row for row, _ in ranked(conn, me, root, client, now)]
+    Highest urgency score first at `now` (the clock's when omitted), then by id.
+
+    A held ask (`held_reason`) waits on no one yet, so it is left out, unless `with_held`: then it is listed for
+    its asker (who must get the brief written) instead of its addressee, and for everyone when `me` is None."""
+    return [row for row, _ in ranked(conn, me, root, client, now, with_held)]
 
 
-def ranked(conn, me=None, root=None, client=None, now=None):
+def _listed(conn, row, me, with_held):
+    """Whether `waiting` lists `row` for `me`: a held ask for its asker (or any `me` None) when `with_held`,
+    never otherwise; any other ask for its addressee."""
+    if held_reason(conn, row) is not None:
+        return with_held and (me is None or row["asker"] == me)
+    return me is None or resolve(conn, row) == me
+
+
+def ranked(conn, me=None, root=None, client=None, now=None, with_held=False):
     """`waiting`'s rows with their urgency: [(row, urgency)], in `waiting`'s order."""
     now = clock.now() if now is None else now
     root_id = items.get(conn, root)["id"] if root is not None else None
     rows = conn.execute("SELECT * FROM items WHERE form = 'ask' AND status = 'open' ORDER BY id").fetchall()
     if root_id is not None:
         rows = [row for row in rows if any(link["id"] == root_id for link in items.lineage(conn, row["id"]))]
-    if me is not None:
-        rows = [row for row in rows if resolve(conn, row) == me]
+    if me is not None or not with_held:
+        rows = [row for row in rows if _listed(conn, row, me, with_held)]
     if client is not None:
         rows = [row for row in rows if items.hierarchy(conn, row["id"])["effective_client"] == client]
     scored = [(row, urgency(conn, row, now)) for row in rows]

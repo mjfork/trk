@@ -391,3 +391,15 @@ def test_a_needs_you_pages_first_publish_marks_the_pages_that_link_it(trk, trk_h
     fake.calls.clear()
     report = flush(trk)
     assert (report["published"], report["updated"]) == ([], []) and fake.tool_calls("update") == []
+
+
+@TABLE
+def test_a_page_comment_reply_has_no_body_and_bumps_rev(trk, trk_home, two_roots, fake):
+    a1 = two_roots["A1"]
+    before = trk("show", a1, "--json").json()["item"]["rev"]
+    fake.add_comment(slug(trk_home, ME), f"ask-{a1}", "Metres.", author="Michael Fork", author_id="u-mf")
+    trk("pages", "tick")
+    shown = trk("show", a1, "--json").json()["item"]
+    [reply] = shown["replies"]
+    assert reply["body"] is None and reply["excerpt"] == "Metres."
+    assert shown["rev"] > before and shown["awaiting"] == "asker"

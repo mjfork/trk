@@ -64,6 +64,10 @@ def build_parser():
     ask.add_argument("title")
     ask.add_argument("--question", metavar="@FILE|-", help="the question's body, from a file or stdin (required)")
     ask.add_argument("--urgent", action="store_true", help="multiply its urgency score by 10 in the waiting list")
+    ask.add_argument("--option", action="append", default=[], metavar="LABEL",
+                     help="a choice the answerer can pick with `trk answer --option N`, numbered from 1 in the order "
+                     "given (repeatable); stored in the ask's options section")
+    ask.add_argument("--recommend", type=int, metavar="N", help="the number of the --option to recommend")
     ask.add_argument("--ledger", metavar="N", help="tie it to ledger row ledger-N of its parent ticket")
     _placement(ask)
     ask.set_defaults(handler=cmd_ask)
@@ -78,7 +82,8 @@ def build_parser():
                                  "held_up is the open items it holds up (its parent, and what the parent blocks through `blocks` edges); "
                                  "the factor rises from 1 to 10 over the first 60 minutes of waiting, while the asker's cache is warm, "
                                  "then drops to 1. A `trk readdress` restarts the wait; a role, owner or move re-route does not. "
-                                 "Ties go to the lower id.")
+                                 "Ties go to the lower id. A RED-read ask whose ticket has no complete review-brief is held: it is left out "
+                                 "for its addressee and listed, marked held, for its asker and (text only) with --all; its wait starts when the brief is complete.")
     whose = waiting.add_mutually_exclusive_group()
     whose.add_argument("--me", metavar="ACTOR", help="asks resolving to ACTOR (default: the writing actor)")
     whose.add_argument("--all", action="store_true", help="every open ask")
@@ -88,8 +93,11 @@ def build_parser():
 
     answer = verbs.add_parser("answer", parents=[common], help="answer an ask and close it done")
     answer.add_argument("id")
-    answer.add_argument("--outcome", required=True, metavar="TEXT", help="the answer's gist in one line")
-    body = answer.add_mutually_exclusive_group(required=True)
+    answer.add_argument("--outcome", metavar="TEXT", help="the answer's gist in one line (required unless --option)")
+    answer.add_argument("--option", type=int, metavar="N",
+                        help="answer with option N of the ask's options section: outcome \"Option N: <label>\", "
+                        "body --answer or else the label")
+    body = answer.add_mutually_exclusive_group()
     body.add_argument("--answer", metavar="@FILE|-", help="the answer's body, from a file or stdin")
     body.add_argument("--from-comment", metavar="COMMENT", help="confirm a reply (a page comment, or reply-N from `trk reply`) as the answer")
     answer.set_defaults(handler=cmd_answer)
@@ -250,7 +258,8 @@ def build_parser():
     config_verb.set_defaults(handler=cmd_config)
     config_set = verbs.add_parser("config set", parents=[common], help="change a store setting")
     config_set.add_argument("key", help=f"the setting: {', '.join(config.SETTABLE)}")
-    config_set.add_argument("value", metavar="VALUE", help="an actor; for template-parent, an item id")
+    config_set.add_argument("value", metavar="VALUE", help="an actor; for template-parent, an item id; for"
+                            " release-verify-job, a workflow job name")
     config_set.set_defaults(handler=cmd_config_set)
 
     worktree = verbs.add_parser("worktree", help="record or remove an item's worktree")
@@ -376,7 +385,8 @@ def build_parser():
                                    help="record a review as human-review evidence; prints its id",
                                    epilog="Without --ref, a person's direct review: --as must be a person, --sha the head,"
                                           " and the head must have a RED rating and an open RED-read ask for"
-                                          " --as. The ref stored is direct:<actor>@<head>.")
+                                          " --as, and the ticket's review-brief must be complete (rule no-brief)."
+                                          " The ref stored is direct:<actor>@<head>.")
     review_verb.add_argument("id")
     review_verb.add_argument("--ref", metavar="URL", help="the GitHub review's URL (default: a direct approval)")
     review_verb.add_argument("--sha", required=True, metavar="S", help="the head sha it reviewed")
@@ -398,6 +408,10 @@ def build_parser():
     evidence_add.add_argument("--ref", metavar="R", help="PR URL, branch, run id, log path, URL…")
     evidence_add.add_argument("--sha", metavar="S", help="the commit, 7 to 40 hex chars")
     evidence_add.add_argument("--verdict", choices=("pass", "fail"))
+    evidence_add.add_argument("--red-first", action="store_true", help="a run that failed on purpose, at a base "
+                              "before the fix, to show the test catches the defect (test-run or webtester-run, "
+                              "gate verified, with --criterion); it counts only beside a passing run of the same "
+                              "criterion, and never decides the criterion's status")
     evidence_add.add_argument("--note", required=True, metavar="TEXT", help="what it shows, in one line")
     evidence_add.set_defaults(handler=cmd_evidence_add)
     evidence_retract = verbs.add_parser("evidence retract", parents=[common],
@@ -534,6 +548,12 @@ def _ledger_parsers(verbs, common):
     audit.add_argument("id")
     audit.add_argument("--note", required=True, metavar="TEXT", help="what the audit covered, in one line")
     audit.set_defaults(handler=cmd_ledger_audit)
+    withdraw = ledger_verbs.add_parser("withdraw", parents=[common], help="withdraw an unjudged row with a reason;"
+                                       " prints ledger-<n>")
+    withdraw.add_argument("id")
+    withdraw.add_argument("n", metavar="N")
+    withdraw.add_argument("--reason", required=True, metavar="TEXT", help="why, in one line")
+    withdraw.set_defaults(handler=cmd_ledger_withdraw)
     promote = ledger_verbs.add_parser("promote", parents=[common], help="record a row's promotion to an ADR (a person)")
     promote.add_argument("id")
     promote.add_argument("n", metavar="N")
@@ -668,7 +688,8 @@ def cmd_ask(args):
     question = _body_flag("--question", args.question)
     where, anchor = _where(args)
     _write_item(args, lambda tx: asks.open_ask(tx, args.parent, args.to, args.title, question, urgent=args.urgent,
-                                               where=where, anchor=anchor, ledger=args.ledger))
+                                               where=where, anchor=anchor, ledger=args.ledger,
+                                               option_labels=args.option, recommended=args.recommend))
 
 
 def cmd_readdress(args):
@@ -685,7 +706,11 @@ def cmd_waiting(args):
         else:
             me = store.resolve_actor(st, args.as_actor, guard=False)
         now = clock.now()
-        listed = [asks.waiting_json(st.conn, row, now) for row in asks.waiting(st.conn, me, args.root, args.client, now)]
+        # JSON for everyone (`--all` included) leaves a held ask out unless `--me` is its asker: hx routes each ask
+        # that `--all --json` lists to its addressee, and a consumer must not wake anyone for a held one.
+        rows = asks.waiting(st.conn, me, args.root, args.client, now, with_held=me is not None or not args.json)
+        held = {row["id"]: asks.held_reason(st.conn, row) for row in rows}
+        listed = [{**asks.waiting_json(st.conn, row, now), "held": held[row["id"]]} for row in rows]
     finally:
         st.close()
     if args.json:
@@ -695,13 +720,23 @@ def cmd_waiting(args):
         urgent = "! " if ask["urgent"] else ""
         parent = ask["parent"]
         print(f"{ask['id']}  {urgent}{_addressed(ask)}  {parent['id']} {parent['title']}  {ask['title']}"
-              f"  {ask['urgency']['reason']}")
+              f"  {ask['urgency']['reason']}" + (f"  [held: {held[ask['id']]}]" if held[ask["id"]] else ""))
 
 
 def cmd_answer(args):
+    if args.option is not None:
+        if args.outcome is not None or args.from_comment is not None:
+            raise usage("--option sets the outcome itself: do not combine it with --outcome or --from-comment")
+        body = _body_flag("--answer", args.answer)
+        _write_item(args, lambda tx: asks.answer_option(tx, args.id, args.option, body))
+        return
+    if args.outcome is None:
+        raise usage("answer needs --outcome \"<one-line gist>\" or --option N")
     if args.from_comment is not None:
         _write_item(args, lambda tx: asks.answer_from_comment(tx, args.id, args.from_comment, args.outcome))
         return
+    if args.answer is None:
+        raise usage("answer needs --answer @file|- or --from-comment (or --option N)")
     body = _body_flag("--answer", args.answer)
     _write_item(args, lambda tx: asks.answer(tx, args.id, args.outcome, body))
 
@@ -1114,9 +1149,22 @@ def cmd_section_set(args):
         actor = store.resolve_actor(st, args.as_actor)
         with st.transaction(actor, store.resolve_session(args.session)) as tx:
             item_id = items.set_section(tx, args.id, args.handle, body)
-        _print_item(st, item_id, args.json, plain=item_id)
+        lacking = _brief_lacking(st, item_id, args.handle, body)
+        if lacking:
+            print(f"warning: {item_id} {args.handle} still lacks {', '.join(lacking)}; only a RED ticket's audit and"
+                  " Merged gates need all nine headings, each with text", file=sys.stderr)
+        _print_item(st, item_id, args.json, plain=item_id, extra={} if lacking is None else {"lacking": lacking})
     finally:
         st.close()
+
+
+def _brief_lacking(st, item_id, handle, body):
+    """The review-brief headings `body` lacks, for a `review-brief` write on a ticket; None for any other section."""
+    from . import blast, stages
+
+    if handle != blast.BRIEF_HANDLE or not stages.is_ticket(items.get(st.conn, item_id)):
+        return None
+    return blast.brief_missing(body)
 
 
 def cmd_section_rm(args):
@@ -1292,7 +1340,7 @@ def cmd_review_record(args):
 def cmd_evidence_add(args):
     _write_evidence(args, lambda evidence, tx: evidence.add(
         tx, args.id, args.kind, args.gate, criterion=args.criterion, ref=args.ref, sha=args.sha,
-        verdict=args.verdict, note=args.note))
+        verdict=args.verdict, note=args.note, red_first=args.red_first))
 
 
 def cmd_evidence_retract(args):
@@ -1334,10 +1382,12 @@ def cmd_evidence(args):
 
 def _evidence_line(row):
     """id, gate, kind, criterion, verdict, sha, ref, whether it counts, then the note."""
+    from . import evidence
+
     parts = [row["id"], row["gate"], row["kind"]]
     if row["criterion"]:
         parts.append(f"{row['criterion']} (v{row['criterion_version']})")
-    parts += [row["verdict"], row["sha"] and row["sha"][:7], row["ref"]]
+    parts += [evidence.verdict_label(row), row["sha"] and row["sha"][:7], row["ref"]]
     parts.append("counts" if row["counts"] else f"not counted ({row['reason']})")
     return "  ".join(part for part in parts if part) + f"  — {row['note']}"
 
@@ -1630,6 +1680,10 @@ def cmd_ledger_settle(args):
                                                          ask=args.ask, adr=args.adr, note=args.note))
 
 
+def cmd_ledger_withdraw(args):
+    _write_ledger(args, lambda ledger, tx: ledger.withdraw(tx, args.id, args.n, args.reason))
+
+
 def cmd_ledger_promote(args):
     _write_ledger(args, lambda ledger, tx: ledger.promote(tx, args.id, args.n, args.adr))
 
@@ -1714,14 +1768,15 @@ def _human_change(row):
     return "  ".join(str(part) for part in parts if part is not None)
 
 
-def _print_item(st, item_id, as_json, plain=None, section_bodies=True):
+def _print_item(st, item_id, as_json, plain=None, section_bodies=True, extra=None):
     item = items.to_json(st.conn, items.get(st.conn, item_id), section_bodies=section_bodies)
     if as_json:
-        _print_json({"schema": 1, "item": item})
+        _print_json({"schema": 1, "item": item, **(extra or {})})
     elif plain is not None:
         print(plain)
     else:
-        print(_human_item(item, section_bodies))
+        held = asks.held_reason(st.conn, items.get(st.conn, item_id)) if item["form"] == "ask" else None
+        print(_human_item(item, section_bodies, held))
 
 
 def _kind_label(item):
@@ -1741,7 +1796,7 @@ def _addressed(ask):
     return f"{ask['addressee_role']} ({ask['addressee'] or '-'})"
 
 
-def _human_item(item, section_bodies=True):
+def _human_item(item, section_bodies=True, held=None):
     lines = [f"{item['id']}  {_kind_label(item)}  {item['title']}"]
     lines.append(f"  status: {item['status']}" + (f" ({item['resolution']})" if item["resolution"] else ""))
     if item["parent"]:
@@ -1753,6 +1808,8 @@ def _human_item(item, section_bodies=True):
     if item["form"] == "ask":
         lines.append(f"  to: {_addressed(item)}")
         lines.append(f"  asker: {item['asker']}")
+        if held:
+            lines.append(f"  held: {held} (the ask stays out of its addressee's waiting list until it can be approved)")
         if item["replies"] and item["status"] == "open":
             latest = item["replies"][-1]
             lines.append(f"  replied: {len(item['replies'])}, latest {latest['comment']} by {latest['actor']}"

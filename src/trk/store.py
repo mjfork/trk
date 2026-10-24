@@ -12,7 +12,7 @@ from pathlib import Path
 from . import claims, clock, config, ids, roles, spawn  # config and roles import store back; all bind modules only
 from .errors import conflict, not_found, refused, usage
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 DEFAULT_LEASE_MINUTES = 60
 BUSY_TIMEOUT_MS = 10_000
 
@@ -359,7 +359,30 @@ PUBLISHER = "publisher"
 # Publisher settings with a default; the rest are written by `pages setup` and the publisher itself.
 PUBLISH_DEFAULTS = (("publish_team", "tracker"), ("publish_renewal_ask", ""))
 
-SCHEMA += ROLES_TABLE + HANDOFFS_TABLE + GATES_TABLES + PAGES_TABLES
+# A ledger row withdrawn by a driver (tr-zn1dk): rows are never edited, so the withdrawal is its own
+# append-only row, one per ledger row.
+LEDGER_WITHDRAWALS_TABLE = """
+CREATE TABLE ledger_withdrawals (
+    item_id    TEXT NOT NULL REFERENCES items (id),
+    n          INTEGER NOT NULL,
+    reason     TEXT NOT NULL,
+    actor      TEXT NOT NULL REFERENCES actors (id),
+    session    TEXT,
+    seq        INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (item_id, n)
+);
+CREATE TRIGGER ledger_withdrawals_no_update BEFORE UPDATE ON ledger_withdrawals
+BEGIN
+    SELECT RAISE(ABORT, 'ledger_withdrawals is append-only');
+END;
+CREATE TRIGGER ledger_withdrawals_no_delete BEFORE DELETE ON ledger_withdrawals
+BEGIN
+    SELECT RAISE(ABORT, 'ledger_withdrawals is append-only');
+END;
+"""
+
+SCHEMA += ROLES_TABLE + HANDOFFS_TABLE + GATES_TABLES + PAGES_TABLES + LEDGER_WITHDRAWALS_TABLE
 
 
 def _schema_1_to_2(tx):
@@ -497,6 +520,13 @@ def _schema_9_to_10(tx):
             tx.conn.execute(f"ALTER TABLE items ADD COLUMN {column} TEXT")
 
 
+def _schema_10_to_11(tx):
+    """Withdrawn ledger rows (tr-zn1dk): the `ledger_withdrawals` table. No existing row is withdrawn; the
+    step journals none."""
+    for statement in _statements(LEDGER_WITHDRAWALS_TABLE):
+        tx.conn.execute(statement)
+
+
 WORKTREE_COLUMNS = ("worktree_path", "worktree_branch", "worktree_repo", "worktree_session", "worktree_at")
 
 
@@ -522,7 +552,7 @@ def add_actor(tx, actor_id, kind, display):
 # MIGRATIONS[v] upgrades a store from schema v to v + 1 inside the write Transaction, so its rows
 # are journaled and feed.head is rewritten like any other write.
 MIGRATIONS = {1: _schema_1_to_2, 2: _schema_2_to_3, 3: _schema_3_to_4, 4: _schema_4_to_5, 5: _schema_5_to_6,
-              6: _schema_6_to_7, 7: _schema_7_to_8, 8: _schema_8_to_9, 9: _schema_9_to_10}
+              6: _schema_6_to_7, 7: _schema_7_to_8, 8: _schema_8_to_9, 9: _schema_9_to_10, 10: _schema_10_to_11}
 
 
 def default_dir():

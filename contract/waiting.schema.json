@@ -159,6 +159,18 @@
           "asker": {
             "$ref": "item.schema.json#/properties/asker"
           },
+          "replies": {
+            "$ref": "item.schema.json#/properties/replies"
+          },
+          "rev": {
+            "$ref": "item.schema.json#/properties/rev"
+          },
+          "awaiting": {
+            "$ref": "item.schema.json#/properties/awaiting"
+          },
+          "red_read": {
+            "$ref": "item.schema.json#/properties/red_read"
+          },
           "parent": {
             "type": "object",
             "description": "The item the ask blocks, in place of the item JSON's parent id.",
@@ -202,6 +214,10 @@
               "urgent": {"type": "boolean", "description": "Whether the x10 factor applied: the ask or its parent is urgent."},
               "reason": {"type": "string", "description": "The line `trk waiting` shows; a page shows it with the render time inside the cache note (as of HH:MMZ)."}
             }
+          },
+          "held": {
+            "type": ["string", "null"],
+            "description": "Why the ask is held back from its addressee, or null: a RED-read ask whose ticket has no complete review brief (`review brief missing: <headings>`). `--all --json` and `--me <addressee> --json` leave a held ask out; `--me <asker> --json` lists it with this reason. Optional and additive, so replies from older builds still validate."
           }
         }
       }

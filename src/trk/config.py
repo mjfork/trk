@@ -1,12 +1,15 @@
-"""Store settings: the default owner, the shared agent and the template parent are the ones a writer can change."""
+"""Store settings: the default owner, the shared agent, the template parent and the release-verification job are
+the ones a writer can change."""
 
 from . import store  # store imports config back; both bind modules only
-from .errors import usage
+from .errors import refused, usage
 
 # CLI/feed spelling -> meta key. Read-only settings are listed by `trk config` too.
-SETTABLE = {"default-owner": "default_owner", "shared-agent": "shared_agent", "template-parent": "template_parent"}
+SETTABLE = {"default-owner": "default_owner", "release-verify-job": "release_verify_job",
+            "shared-agent": "shared_agent", "template-parent": "template_parent"}
 LISTED = {"default-actor": "default_actor", "default-owner": "default_owner", "id-prefix": "id_prefix",
-          "lease-minutes": "lease_minutes", "shared-agent": "shared_agent", "template-parent": "template_parent"}
+          "lease-minutes": "lease_minutes", "release-verify-job": "release_verify_job",
+          "shared-agent": "shared_agent", "template-parent": "template_parent"}
 
 # Settings with a value before anyone sets them: the shared agent, for whom only the ledger's session
 # check applies (Stage gates, Builder and independence).
@@ -36,6 +39,15 @@ def set_value(tx, name, value):
         value = check_template_parent(tx.conn, value)
     elif name == "shared-agent":
         value = check_shared_agents(tx.conn, value)
+    elif name == "release-verify-job":
+        value = value.strip()
+        if not value or "\n" in value:
+            raise usage("release-verify-job is a job name on one line")
+        from . import release
+
+        if not release.is_person(tx.conn, tx.actor, tx.session):  # only a person names the job a run must pass
+            raise refused("job-needs-person", "release-verify-job is named by a person, not an agent session:"
+                          f" {tx.actor!r} wrote this from {'session ' + tx.session if tx.session else 'no session'}")
     else:
         store.require_actor(tx.conn, value)
     key = SETTABLE[name]

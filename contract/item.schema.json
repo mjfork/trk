@@ -110,6 +110,7 @@
             "description": "The latest settlement, or null."
           },
           "promotion": {"type": ["object", "null"], "required": ["adr", "actor", "session", "seq", "created_at"], "description": "The latest promotion to an ADR, or null."},
+          "withdrawn": {"type": ["object", "null"], "required": ["reason", "actor", "session", "seq", "created_at"], "description": "The withdrawal of the row (`ledger withdraw`), or null. A withdrawn row stays listed and counts at no gate. Absent on rows read from a build before tr-zn1dk."},
           "asks": {
             "type": "array",
             "description": "Asks tied to the row (`ask --ledger`), oldest first, open or closed.",
@@ -193,7 +194,38 @@
           "comment": {"type": "string", "minLength": 1},
           "actor": {"$ref": "#/$defs/id", "description": "The commenter."},
           "at": {"$ref": "#/$defs/timestamp", "description": "When the reply was recorded."},
-          "excerpt": {"type": "string"}
+          "excerpt": {"type": "string"},
+          "body": {"type": ["string", "null"], "description": "The reply's full text where trk holds it (`trk reply`); null for a page comment, which keeps only its excerpt. Optional: older output has none."}
+        }
+      }
+    },
+    "rev": {"type": "integer", "minimum": 0, "description": "Asks only, optional: the latest journal seq touching the ask, every `ask.replied` row included (a reply leaves updated_at alone); for an open RED-read ask, the larger of that and the same for its ticket. A client sends it back with an action so a stale one can be refused."},
+    "awaiting": {"enum": ["addressee", "asker", null], "description": "Asks only, optional: who must act next. `asker` when the latest reply since the ask's latest opening is by anyone but the asker; otherwise `addressee`; null once the ask is closed."},
+    "red_read": {
+      "type": "object",
+      "description": "Open RED-read asks only, optional (its presence marks a RED-read ask; other items carry none): the ticket's latest RED rating, counting or not (see `current`), and its review brief as data. `brief` and `brief_lacking` come from the parser the Merged and audit gates use, so they never disagree with a gate.",
+      "required": ["ticket", "sha", "current", "roles", "files_count", "brief", "brief_lacking", "brief_complete", "brief_writer"],
+      "properties": {
+        "ticket": {"$ref": "#/$defs/id", "description": "The ticket the ask is under."},
+        "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$", "description": "The RED rating's head sha, in full: pass it as `trk review record --sha` only while `current` is true."},
+        "current": {"type": "boolean", "description": "Whether the rating counts at the ticket's head now. False after a newer `pr` row before a re-rating, or after a `reopen-stage`: the ask stays open with the last RED rating, and a client shows the card without Approve (an approval of a stale sha is refused)."},
+        "roles": {"type": "array", "items": {"$ref": "#/$defs/role"}, "description": "Every role that reviews a RED file of the rating, in name order."},
+        "files_count": {"type": "integer", "minimum": 0, "description": "RED files in the rating, hidden (sensitive) ones counted."},
+        "brief": {
+          "type": "object",
+          "description": "Each of the nine brief headings' text, or null when the section lacks that heading or leaves it empty.",
+          "required": ["decision", "what_changes", "why_red", "impact", "evidence", "rollback", "decision_criteria", "where_to_look", "recommendation"],
+          "properties": {
+            "decision": {"type": ["string", "null"]}, "what_changes": {"type": ["string", "null"]}, "why_red": {"type": ["string", "null"]},
+            "impact": {"type": ["string", "null"]}, "evidence": {"type": ["string", "null"]}, "rollback": {"type": ["string", "null"]},
+            "decision_criteria": {"type": ["string", "null"]}, "where_to_look": {"type": ["string", "null"]}, "recommendation": {"type": ["string", "null"]}
+          }
+        },
+        "brief_lacking": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The headings (as written in the brief, e.g. \"What changes and why\") the section lacks or leaves empty, in order."},
+        "brief_complete": {"type": "boolean", "description": "True exactly when brief_lacking is empty."},
+        "brief_writer": {
+          "anyOf": [{"type": "null"}, {"type": "object", "required": ["actor", "session"], "properties": {"actor": {"$ref": "#/$defs/id"}, "session": {"type": ["string", "null"]}}}],
+          "description": "The actor and session of the review-brief section's latest write; null when there is no brief."
         }
       }
     },
@@ -214,10 +246,10 @@
   },
   "allOf": [
     {
-      "description": "An ask carries addressee_role, addressee, addressee_kind, asker, ledger and replies; other items carry none of them.",
+      "description": "An ask carries addressee_role, addressee, addressee_kind, asker, ledger and replies, and may carry rev, awaiting and red_read; other items carry none of them.",
       "if": {"properties": {"form": {"const": "ask"}}, "required": ["form"]},
       "then": {"required": ["addressee_role", "addressee", "addressee_kind", "asker", "ledger", "replies"]},
-      "else": {"not": {"anyOf": [{"required": ["addressee_role"]}, {"required": ["addressee"]}, {"required": ["addressee_kind"]}, {"required": ["asker"]}, {"required": ["ledger"]}, {"required": ["replies"]}]}}
+      "else": {"not": {"anyOf": [{"required": ["addressee_role"]}, {"required": ["addressee"]}, {"required": ["addressee_kind"]}, {"required": ["asker"]}, {"required": ["ledger"]}, {"required": ["replies"]}, {"required": ["rev"]}, {"required": ["awaiting"]}, {"required": ["red_read"]}]}}
     },
     {
       "if": {"properties": {"kind": {"const": "work-item"}}},

@@ -245,8 +245,9 @@ def test_program_with_a_destination_and_no_close_row_is_refused(trk, world):
     ok(trk, "close", world["K"], "--resolution", "wont-do", "--outcome", "Dropped.")
     error = refusal(trk, "close", world["P"], "--resolution", "done", "--outcome", "Arrived.")
     assert error["missing"] == [{"need": "criterion-pass", "criterion": "ac-1", "version": 1, "latest": None}]
-    ok(trk, "evidence", "add", world["P"], "--kind", "test-run", "--gate", "close", "--criterion", "ac-1",
-       "--ref", "e2e-run", "--verdict", "pass", "--note", "End to end.")
+    ok(trk, "criterion", "edit", world["P"], "ac-1", "The destination holds. accept-by: michael")
+    ok(trk, "evidence", "add", world["P"], "--kind", "human-accept", "--gate", "close", "--criterion", "ac-1",
+       "--ref", "page", "--verdict", "pass", "--note", "Accepted.")
     ok(trk, "close", world["P"], "--resolution", "done", "--outcome", "Arrived.")
 
 

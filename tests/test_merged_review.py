@@ -54,7 +54,8 @@ def lane(trk, tmp_path):
 
 
 def build_at(trk, t, sha):
-    """pr and a passing test-run at `sha`, as builder in W."""
+    """The claim, then pr and a passing test-run at `sha`, as builder in W (W keeps the claim)."""
+    ok(trk, "claim", t, *W)
     ok(trk, "evidence", "add", t, "--kind", "pr", "--gate", "built", "--ref", "https://github.com/o/r/pull/1",
        "--sha", sha, "--note", "PR", *W)
     ok(trk, "evidence", "add", t, "--kind", "test-run", "--gate", "built", "--ref", "run-1", "--sha", sha,
@@ -352,6 +353,8 @@ def test_an_audit_or_verdict_stops_counting_once_its_session_builds_the_ticket(t
     judge(trk, t, n, "sound")
     reviewed(trk, t, sha)
     assert missing(trk, t) == []
+    ok(trk, "claim", "release", t, *W)
+    ok(trk, "claim", t, *V)
     ok(trk, "evidence", "add", t, "--kind", "test-run", "--gate", "built", "--ref", "run-2", "--sha", sha,
        "--verdict", "pass", "--note", "green", *V)
     assert [m["need"] for m in missing(trk, t)] == ["audit", "ledger-verdict"]
@@ -460,6 +463,7 @@ def test_a_green_ticket_with_ledger_rows_and_no_verdicts_still_merges(trk, lane)
 def test_a_skipped_merged_needs_no_review_of_its_ledger_rows(trk, lane):
     t = ok(trk, "new", "work-item", "T", "--form", "spec-bound", "--parent", lane["J"], *ticket("spec-bound"))
     sha = git(lane["path"], "rev-parse", "HEAD")
+    ok(trk, "claim", t, *W)
     ok(trk, "evidence", "add", t, "--kind", "pr", "--gate", "built", "--ref", "none", "--sha", sha, "--note", "No PR",
        *W)
     ok(trk, "evidence", "add", t, "--kind", "test-run", "--gate", "built", "--ref", "run-1", "--sha", sha,

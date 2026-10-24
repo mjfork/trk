@@ -21,10 +21,6 @@ from .render import page_kind
 
 DEFAULT_TOKEN_FILE = "~/.config/trk/token"
 TOKEN_ENV = "TRK_ARTIFACT_TOKEN"
-# A store set up before backends were named publishes to the service its base URL names, which the
-# add-on that took over that client registers under this name.
-LEGACY_BACKEND = "artifact-service"
-
 # CLI/feed spelling -> meta key, in the order setup journals them.
 SETTINGS = (("publish-backend", "publish_backend"), ("publish-base-url", "publish_base_url"),
             ("publish-dir", "publish_dir"), ("publish-token-file", "publish_token_file"),
@@ -33,8 +29,9 @@ SETTINGS = (("publish-backend", "publish_backend"), ("publish-base-url", "publis
 
 
 def backend_name(st):
-    """The configured page backend's name, or None before setup."""
-    return st.meta("publish_backend") or (LEGACY_BACKEND if st.meta("publish_base_url") else None)
+    """The configured page backend's name, or None before setup. A store set up before backends had
+    names has none until `trk pages setup --backend NAME` runs once more."""
+    return st.meta("publish_backend") or None
 
 
 def is_set_up(st):

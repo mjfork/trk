@@ -34,6 +34,7 @@ def make(trk, trk_home, tmp_path, remote):
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     commit(repo, ".trk/blast-radius", "# no rules: every change rates green\n")
+    git(repo, "checkout", "-q", "-b", "feature")  # main is where the PR merges into
     sha = commit(repo, "work")
     if remote:
         git(repo, "remote", "add", "origin", remote)

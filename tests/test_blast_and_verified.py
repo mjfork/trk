@@ -342,6 +342,7 @@ def test_rules_rate_each_file_by_its_highest_matching_rule(trk, tmp_path):
     since = head(trk)
     row = blast(trk, t)
     assert (row["kind"], row["gate"], row["sha"], row["verdict"]) == ("blast-radius", "merged", sha, None)
+    assert row["detail"].pop("base")  # the rating's base, kept for the Merged gate to check again
     assert row["detail"] == {"lane": "red", "files": [
         {"path": "README.md", "colour": "green", "rule": None, "adr": None, "roles": []},
         {"path": "contract/x/y.json", "colour": "red", "rule": "RED contract/**", "adr": None, "roles": ["engineering"]},
@@ -365,6 +366,48 @@ def test_a_repo_with_no_rules_file_is_refused_and_records_no_lane(trk, tmp_path)
 
 def test_a_repo_whose_rules_file_is_comments_only_still_rates_every_file_green(trk, tmp_path):
     path, sha = lane_repo(tmp_path, {}, ["src/a.py", "contract/b.json"], rules="# deliberately all green\n")
+    t = lane_ticket(trk, path, sha)
+    assert ok(trk, "blast-radius", t) == "green"
+
+
+def rules_edit_repo(tmp_path, base_rules, edited):
+    """A checkout whose main holds `base_rules` and whose feature branch rewrites the rules file to `edited`;
+    returns (path, the feature head, the base)."""
+    r = tmp_path / "E"
+    r.mkdir()
+    git(r, "init", "-q", "-b", "main")
+    base = commit(r, ".trk/blast-radius", base_rules)
+    git(r, "checkout", "-q", "-b", "feature")
+    sha = commit(r, ".trk/blast-radius", edited)
+    return str(r), sha, base
+
+
+@pytest.mark.parametrize("edited", [
+    "# the map\nRED .trk/blast-radius\nYELLOW src/**\n",
+    "# the map\nYELLOW src/**\n",
+    "# all green now\n",
+    "",
+], ids=["rule-kept", "own-rule-deleted", "comments-only", "emptied"])
+def test_a_change_to_the_rules_file_rates_red_whatever_the_file_says_at_the_head(trk, tmp_path, edited):
+    path, sha, base = rules_edit_repo(tmp_path, "RED .trk/blast-radius\nYELLOW src/**\n", edited)
+    t = lane_ticket(trk, path, sha)
+    row = blast(trk, t, "--base", base)
+    assert row["detail"]["lane"] == "red"
+    assert row["detail"]["files"] == [{"path": ".trk/blast-radius", "colour": "red", "rule": "RED .trk/blast-radius",
+                                       "adr": None, "roles": ["engineering"]}]
+    assert item(trk, t)["lane"] == "red"
+
+
+def test_a_rules_file_with_no_rule_for_itself_still_rates_red_and_a_rule_naming_a_role_keeps_that_role(trk, tmp_path):
+    path, sha, base = rules_edit_repo(tmp_path, "# nothing\n", "RED:product .trk/blast-radius\n")
+    t = lane_ticket(trk, path, sha)
+    files = blast(trk, t, "--base", base)["detail"]["files"]
+    assert [(f["colour"], f["rule"]) for f in files] == [("red", "RED:product .trk/blast-radius")]
+    assert files[0]["roles"] == ["product"]
+
+
+def test_a_change_that_leaves_the_rules_file_alone_is_not_raised(trk, tmp_path):
+    path, sha = lane_repo(tmp_path, {}, ["src/a.py"], rules="# deliberately all green\n")
     t = lane_ticket(trk, path, sha)
     assert ok(trk, "blast-radius", t) == "green"
 
@@ -411,7 +454,8 @@ def test_the_base_defaults_to_origin_head_then_main_then_master(trk, tmp_path):
     git(path, "update-ref", "refs/remotes/origin/trunk", sha)
     git(path, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
     assert refusal(trk, "blast-radius", t)["rule"] == "empty-diff"
-    assert [f["path"] for f in blast(trk, t, "--base", "master")["detail"]["files"]] == ["one", "two"]
+    # origin/HEAD now names the PR's own commit: no branch point, so even an honest explicit base is refused
+    assert refusal(trk, "blast-radius", t, "--base", "master")["rule"] == "base-hides-pr"
 
 
 # --- tr-y05c7: rating after the merge ---
@@ -428,8 +472,10 @@ def test_rating_after_a_fast_forward_merge_is_refused_empty_diff_not_rated_green
     assert (error["rule"], error["item"]) == ("empty-diff", t)
     assert "--base" in error["message"]
     assert head(trk) == before and item(trk, t)["lane"] is None
-    row = blast(trk, t, "--base", branched)
-    assert row["detail"]["lane"] == "yellow" and row["note"].endswith(f"(against {branched})")
+    # a fast-forward leaves nothing that shows where the PR began (the commits are main's own now): rate before merging
+    error = refusal(trk, "blast-radius", t, "--base", branched)
+    assert error["rule"] == "base-hides-pr" and "already holds the PR" in error["message"]
+    assert head(trk) == before and item(trk, t)["lane"] is None
 
 
 def test_rating_after_a_merge_commit_rates_against_its_first_parent(trk, tmp_path):
@@ -444,10 +490,11 @@ def test_rating_after_a_merge_commit_rates_against_its_first_parent(trk, tmp_pat
     assert row["detail"]["lane"] == "yellow" and row["note"].endswith(f"(against {before_merge})")
 
 
-def test_an_explicit_base_may_rate_an_empty_diff_green(trk, tmp_path):
+def test_an_explicit_base_at_the_rated_sha_hides_the_pr_and_is_refused(trk, tmp_path):
+    """It rated an empty diff GREEN: what `--base <PR head>` did to any PR (tr-eec4a)."""
     path, sha = lane_repo(tmp_path, {}, ["one"])
     t = lane_ticket(trk, path, sha)
-    assert blast(trk, t, "--base", sha)["detail"] == {"lane": "green", "files": []}
+    assert refusal(trk, "blast-radius", t, "--base", sha)["rule"] == "base-hides-pr"
 
 
 def test_an_unknown_base_is_refused(trk, tmp_path):
@@ -460,7 +507,8 @@ def test_a_head_without_main_master_or_origin_head_needs_base(trk, tmp_path):
     path, sha = lane_repo(tmp_path, {}, ["one"], branch="trunk")
     t = lane_ticket(trk, path, sha)
     assert trk("blast-radius", t).code == 2
-    assert blast(trk, t, "--base", "trunk")["detail"]["lane"] == "green"
+    # and no ref shows where the PR began, so an explicit base is refused too (until `gh` can compare the PR's files)
+    assert refusal(trk, "blast-radius", t, "--base", "trunk")["rule"] == "base-hides-pr"
 
 
 # --- AC 6 of this ticket: the shared helper ---
@@ -518,6 +566,7 @@ def test_a_sensitive_directory_stores_counts_per_colour_and_no_file_name(trk, tm
     t = lane_ticket(trk, path, sha)
     ok(trk, "actor", "add", "worker", "--kind", "agent")
     row = blast(trk, t, "--as", "worker")
+    assert row["detail"].pop("base")  # the rating's base, kept for the Merged gate to check again
     assert row["detail"] == {"lane": "red", "files": [
         {"path": "docs/z.json", "colour": "yellow", "rule": "YELLOW **/*.json", "adr": None, "roles": []},
         {"path": "src/a.py", "colour": "green", "rule": None, "adr": None, "roles": []},

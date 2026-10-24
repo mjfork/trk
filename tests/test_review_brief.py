@@ -7,8 +7,10 @@ Every test runs against a real throwaway git repo whose rules file makes `contra
 
 import pytest
 
+from gated import section_file
 from trk.blast import BRIEF_HEADINGS, brief_missing
-from test_blast_and_verified import BRIEF, RULES, item, lane_repo, lane_ticket, merge, ok, refusal, write_brief
+from gated import commit, git
+from test_blast_and_verified import BRIEF, RULES, item, lane_repo, lane_ticket, merge, ok, pr, refusal, write_brief
 from test_red_read import PR, asks_under, red_ticket
 
 V = ("--as", "reviewer", "--session", "V")
@@ -160,10 +162,13 @@ def test_a_red_re_rating_after_a_green_one_brings_the_brief_back_into_the_gate(t
     for actor in ("worker", "reviewer"):
         ok(trk, "actor", "add", actor, "--kind", "agent")
     assert ok(trk, "blast-radius", t, "--as", "worker") == "red"
-    assert ok(trk, "blast-radius", t, "--base", sha, "--as", "worker") == "green"
+    root = git(path, "rev-parse", "main")
+    git(path, "branch", "-f", "main", sha)  # the RED file lands on main; the PR gains a GREEN commit
+    pr(trk, t, commit(path, "docs/z.md"))
+    assert ok(trk, "blast-radius", t, "--base", "main", "--as", "worker") == "green"
     assert "review-brief" not in gate_needs(trk, t)
     assert audit(trk, t).code == 0  # latest rating is GREEN: no brief asked
-    assert ok(trk, "blast-radius", t, "--as", "worker") == "red"
+    assert ok(trk, "blast-radius", t, "--base", root, "--as", "worker") == "red"
     assert gate_needs(trk, t)["review-brief"]["missing"] == list(BRIEF_HEADINGS)
 
 
@@ -246,13 +251,11 @@ def test_an_answered_ask_is_not_rewritten_when_the_brief_changes(trk, red):
     assert ok(trk, "section", "get", ask["id"], "question") == before
 
 
-def test_the_item_page_and_the_needs_you_page_show_the_brief_above_the_files(trk, red):
+def test_the_item_page_shows_the_brief_above_the_files_and_the_needs_you_page_only_once_it_is_complete(trk, red):
     t, _ = red
     [ask] = asks_under(trk, t)
-    for target in (t, "needs-you:michael"):
-        html = ok(trk, "pages", "render", target, "--out", "-")
-        assert "brief pending" in html
-        assert html.index("brief pending") < html.index("RED files:") < html.index("trk review record")
+    html = ok(trk, "pages", "render", "needs-you:michael", "--out", "-")  # held (tr-4bhay): not listed at all
+    assert ask["id"] not in html and "brief pending" not in html
     write_brief(trk, t)
     for target in (t, "needs-you:michael"):
         html = ok(trk, "pages", "render", target, "--out", "-")
@@ -271,3 +274,139 @@ def test_the_guidance_describes_the_brief_and_its_rule(path):
         assert heading in text
     if path != "skills/trk-drive-program/SKILL.md":
         assert all(heading in text for heading in BRIEF_HEADINGS)
+
+
+# --- tr-nc512: tolerant headings, a warning on set, and a truthful byline ---
+
+def test_two_plain_variants_both_count_as_present():
+    text = BRIEF.replace("## Why it's RED", "## 3. Why it is RED").replace("## Decision\n", "**decision:**\n")
+    assert "**decision:**" in text and "Why it is RED" in text
+    assert brief_missing(text) == []
+
+
+def test_section_set_warns_naming_what_a_brief_lacks_and_json_carries_it(trk, red):
+    t, _ = red
+    path = section_file("review-brief", without("Rollback", "Where to look"))
+    result = trk("section", "set", t, "review-brief", "--file", str(path), "--json")
+    assert result.code == 0
+    assert "warning" in result.err and "Rollback, Where to look" in result.err
+    assert "only a RED ticket's audit and Merged gates need all nine headings" in result.err
+    assert result.json()["lacking"] == ["Rollback", "Where to look"]
+    complete = trk("section", "set", t, "review-brief", "--file", str(section_file("review-brief", BRIEF)), "--json")
+    assert complete.code == 0 and complete.err == "" and complete.json()["lacking"] == []
+
+
+def test_section_set_on_another_section_has_no_warning_and_no_lacking(trk, red):
+    t, _ = red
+    result = trk("section", "set", t, "resolution", "--file", str(section_file("resolution", "Done.")), "--json")
+    assert result.code == 0 and result.err == "" and "lacking" not in result.json()
+
+
+def hold(trk, t, session, actor="worker"):
+    """Hold `t`'s claim as `session`, as a builder does before its writes; another session's claim is released first."""
+    [live] = [c for c in trk("claims", "--json").json()["claims"] if c["item"] == t] or [None]
+    if live is not None and live["session"] == session:
+        return
+    if live is not None:
+        ok(trk, "claim", "release", t, "--as", live["actor"], "--session", live["session"])
+    ok(trk, "claim", t, "--as", actor, "--session", session)
+
+
+def builder_evidence(trk, t, sha, session):
+    hold(trk, t, session)
+    ok(trk, "evidence", "add", t, "--kind", "pr", "--gate", "built", "--ref", PR, "--sha", sha, "--note", "x",
+       "--as", "worker", "--session", session)
+    ok(trk, "evidence", "add", t, "--kind", "test-run", "--gate", "built", "--ref", "run-1", "--sha", sha,
+       "--verdict", "pass", "--note", "x", "--as", "worker", "--session", session)
+
+
+def test_the_ask_names_the_writer_and_claims_independence_only_for_another_session(trk, red):
+    t, sha = red
+    builder_evidence(trk, t, sha, "BUILDSESSION1")
+    write_brief(trk, t, BRIEF, "--as", "reviewer", "--session", "AUDITSESSION9")
+    text = question(trk, t)
+    assert "Review brief, written by reviewer (session AUDITSES), independent of the builder:" in text
+    assert "written by the independent auditor" not in text
+
+
+def test_the_ask_drops_independence_when_the_brief_was_written_in_the_builders_session(trk, red):
+    t, sha = red
+    builder_evidence(trk, t, sha, "BUILDSESSION1")
+    write_brief(trk, t, BRIEF, "--as", "reviewer", "--session", "BUILDSESSION1")
+    text = question(trk, t)
+    assert "Review brief, written by reviewer (session BUILDSES):" in text
+    assert "independent" not in text.split("Text under Decision.")[0]
+
+
+def test_the_ask_claims_nothing_when_the_record_has_no_builder_session_or_no_writer_session(trk, red):
+    t, sha = red
+    write_brief(trk, t, BRIEF, "--as", "reviewer", "--session", "AUDITSESSION9")
+    assert "Review brief, written by reviewer (session AUDITSES):" in question(trk, t)
+    builder_evidence(trk, t, sha, "BUILDSESSION1")
+    write_brief(trk, t, BRIEF + "\n", "--as", "worker")
+    assert "Review brief, written by worker:" in question(trk, t)
+
+
+def byline(trk, t):
+    [line] = [l for l in question(trk, t).split("\n") if l.startswith("Review brief, written by")]
+    return line
+
+
+def test_a_builder_ledger_row_session_is_a_builder_even_when_the_evidence_is_from_another_session(trk, red):
+    t, sha = red
+    hold(trk, t, "BUILDERX00001")
+    ok(trk, "ledger", "add", t, "--kind", "fork", "--decided", "d", "--alternative", "a", "--why", "w",
+       "--as", "worker", "--session", "BUILDERX00001")
+    builder_evidence(trk, t, sha, "EVIDENCEY0001")
+    write_brief(trk, t, BRIEF, "--as", "reviewer", "--session", "BUILDERX00001")
+    assert byline(trk, t) == "Review brief, written by reviewer (session BUILDERX):"
+
+
+def test_builder_evidence_recorded_by_the_briefs_writer_after_the_brief_removes_the_claim(trk, red):
+    t, sha = red
+    builder_evidence(trk, t, sha, "BUILDSESSION1")
+    write_brief(trk, t, BRIEF, "--as", "reviewer", "--session", "AUDITSESSION9")
+    assert byline(trk, t).endswith("(session AUDITSES), independent of the builder:")
+    hold(trk, t, "AUDITSESSION9", "reviewer")
+    ok(trk, "evidence", "add", t, "--kind", "test-run", "--gate", "built", "--ref", "r2", "--sha", sha,
+       "--verdict", "pass", "--note", "x", "--as", "reviewer", "--session", "AUDITSESSION9")
+    assert byline(trk, t) == "Review brief, written by reviewer (session AUDITSES):"
+    assert audit_refused_not_independent(trk, t)
+
+
+def audit_refused_not_independent(trk, t):
+    error = trk("ledger", "audit", t, "--note", "x", "--as", "reviewer", "--session", "AUDITSESSION9", "--json")
+    return error.code == 1 and error.error()["rule"] == "not-independent"
+
+
+def test_a_builder_ledger_row_added_after_the_brief_removes_the_claim(trk, red):
+    t, sha = red
+    builder_evidence(trk, t, sha, "BUILDSESSION1")
+    write_brief(trk, t, BRIEF, "--as", "reviewer", "--session", "AUDITSESSION9")
+    assert "independent of the builder" in byline(trk, t)
+    hold(trk, t, "AUDITSESSION9")
+    ok(trk, "ledger", "add", t, "--kind", "fork", "--decided", "d", "--alternative", "a", "--why", "w",
+       "--as", "worker", "--session", "AUDITSESSION9")
+    assert "independent" not in byline(trk, t)
+
+
+def test_the_claim_is_restored_never_invented_by_unrelated_writes(trk, red):
+    t, sha = red
+    builder_evidence(trk, t, sha, "BUILDSESSION1")
+    write_brief(trk, t, BRIEF, "--as", "reviewer", "--session", "AUDITSESSION9")
+    hold(trk, t, "BUILDSESSION1")
+    ok(trk, "ledger", "add", t, "--kind", "fork", "--decided", "d", "--alternative", "a", "--why", "w",
+       "--as", "worker", "--session", "BUILDSESSION1")
+    assert byline(trk, t).endswith("(session AUDITSES), independent of the builder:")
+
+
+def test_a_stage_move_back_that_makes_the_briefs_writers_claim_a_pre_built_one_removes_the_claim(trk, tmp_path):
+    _, sha, t = red_ticket(trk, tmp_path)
+    ok(trk, "actor", "add", "reviewer", "--kind", "agent")
+    builder_evidence(trk, t, sha, "BUILDSESSION1")
+    hold(trk, t, "AUDITSESSION9", "reviewer")
+    assert ok(trk, "blast-radius", t, "--as", "worker") == "red"
+    write_brief(trk, t, BRIEF, "--as", "reviewer", "--session", "AUDITSESSION9")
+    assert byline(trk, t).endswith("(session AUDITSES), independent of the builder:")
+    ok(trk, "reopen-stage", t, "framed", "--reason", "back", "--as", "worker", "--session", "OTHER00000001")
+    assert byline(trk, t) == "Review brief, written by reviewer (session AUDITSES):"

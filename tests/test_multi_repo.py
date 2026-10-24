@@ -40,6 +40,7 @@ def add(trk, t, *argv):
 
 def test_rows_at_a_commit_of_the_second_repo_count_and_the_ticket_reaches_verified(trk, world):
     t, b = world["t"], world["b"]
+    git(b, "checkout", "-q", "-b", "feature")  # main is where the PR merges into
     b1 = commit(b, "b1.txt")
     add(trk, t, "--kind", "pr", "--gate", "built", "--ref", "none", "--sha", b1, "--note", "PR")
     add(trk, t, "--kind", "test-run", "--gate", "built", "--ref", "run", "--sha", b1[:9], "--verdict", "pass",

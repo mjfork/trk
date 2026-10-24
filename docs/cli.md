@@ -67,7 +67,8 @@ options:
 
 ```text
 usage: trk ask [-h] [--as ACTOR] [--session SESSION] [--json] --to ROLE
-               [--question @FILE|-] [--urgent] [--ledger N]
+               [--question @FILE|-] [--urgent] [--option LABEL]
+               [--recommend N] [--ledger N]
                [--first | --last | --before ID | --after ID]
                ID title
 
@@ -83,6 +84,10 @@ options:
   --to ROLE           a function role (see `trk roles`) or parent
   --question @FILE|-  the question's body, from a file or stdin (required)
   --urgent            multiply its urgency score by 10 in the waiting list
+  --option LABEL      a choice the answerer can pick with `trk answer --option
+                      N`, numbered from 1 in the order given (repeatable);
+                      stored in the ask's options section
+  --recommend N       the number of the --option to recommend
   --ledger N          tie it to ledger row ledger-N of its parent ticket
   --first             first among its siblings
   --last              last among its siblings (default)
@@ -118,7 +123,9 @@ held_up is the open items it holds up (its parent, and what the parent blocks
 through `blocks` edges); the factor rises from 1 to 10 over the first 60
 minutes of waiting, while the asker's cache is warm, then drops to 1. A `trk
 readdress` restarts the wait; a role, owner or move re-route does not. Ties go
-to the lower id.
+to the lower id. A RED-read ask whose ticket has no complete review-brief is
+held: it is left out for its addressee and listed, marked held, for its asker
+and (text only) with --all; its wait starts when the brief is complete.
 
 options:
   -h, --help         show this help message and exit
@@ -134,8 +141,9 @@ options:
 ## trk answer
 
 ```text
-usage: trk answer [-h] [--as ACTOR] [--session SESSION] [--json] --outcome
-                  TEXT (--answer @FILE|- | --from-comment COMMENT)
+usage: trk answer [-h] [--as ACTOR] [--session SESSION] [--json]
+                  [--outcome TEXT] [--option N]
+                  [--answer @FILE|- | --from-comment COMMENT]
                   id
 
 positional arguments:
@@ -146,7 +154,11 @@ options:
   --as ACTOR            writing actor
   --session SESSION     writing session id
   --json                print JSON
-  --outcome TEXT        the answer's gist in one line
+  --outcome TEXT        the answer's gist in one line (required unless
+                        --option)
+  --option N            answer with option N of the ask's options section:
+                        outcome "Option N: <label>", body --answer or else the
+                        label
   --answer @FILE|-      the answer's body, from a file or stdin
   --from-comment COMMENT
                         confirm a reply (a page comment, or reply-N from `trk
@@ -652,8 +664,10 @@ See also `trk config set`.
 usage: trk config set [-h] [--as ACTOR] [--session SESSION] [--json] key VALUE
 
 positional arguments:
-  key                the setting: default-owner, shared-agent, template-parent
-  VALUE              an actor; for template-parent, an item id
+  key                the setting: default-owner, release-verify-job, shared-
+                     agent, template-parent
+  VALUE              an actor; for template-parent, an item id; for release-
+                     verify-job, a workflow job name
 
 options:
   -h, --help         show this help message and exit
@@ -1102,8 +1116,9 @@ options:
   --note TEXT           what it says, in one line
 
 Without --ref, a person's direct review: --as must be a person, --sha the
-head, and the head must have a RED rating and an open RED-read ask for --as.
-The ref stored is direct:<actor>@<head>.
+head, and the head must have a RED rating and an open RED-read ask for --as,
+and the ticket's review-brief must be complete (rule no-brief). The ref stored
+is direct:<actor>@<head>.
 ```
 
 ## trk evidence
@@ -1130,7 +1145,7 @@ See also `trk evidence add` and `trk evidence retract`.
 ```text
 usage: trk evidence add [-h] [--as ACTOR] [--session SESSION] [--json] --kind
                         K --gate G [--criterion ac-N] [--ref R] [--sha S]
-                        [--verdict {pass,fail}] --note TEXT
+                        [--verdict {pass,fail}] [--red-first] --note TEXT
                         id
 
 positional arguments:
@@ -1148,6 +1163,11 @@ options:
   --ref R               PR URL, branch, run id, log path, URL…
   --sha S               the commit, 7 to 40 hex chars
   --verdict {pass,fail}
+  --red-first           a run that failed on purpose, at a base before the
+                        fix, to show the test catches the defect (test-run or
+                        webtester-run, gate verified, with --criterion); it
+                        counts only beside a passing run of the same
+                        criterion, and never decides the criterion's status
   --note TEXT           what it shows, in one line
 ```
 
@@ -1373,10 +1393,10 @@ options:
 ## trk ledger
 
 ```text
-usage: trk ledger [-h] {add,list,verdict,settle,audit,promote} ...
+usage: trk ledger [-h] {add,list,verdict,settle,audit,withdraw,promote} ...
 
 positional arguments:
-  {add,list,verdict,settle,audit,promote}
+  {add,list,verdict,settle,audit,withdraw,promote}
     add                 log a fork, contradiction or reward-hacking flag;
                         prints ledger-<n>
     list                a ticket's ledger rows with their latest verdict,
@@ -1386,6 +1406,8 @@ positional arguments:
     audit               record the auditor's pass at the head sha; prints the
                         evidence id; a RED ticket needs its review-brief
                         section first
+    withdraw            withdraw an unjudged row with a reason; prints
+                        ledger-<n>
     promote             record a row's promotion to an ADR (a person)
 
 options:
@@ -1507,6 +1529,25 @@ options:
   --session SESSION  writing session id
   --json             print JSON
   --note TEXT        what the audit covered, in one line
+```
+
+## trk ledger withdraw
+
+```text
+usage: trk ledger withdraw [-h] [--as ACTOR] [--session SESSION] [--json]
+                           --reason TEXT
+                           id N
+
+positional arguments:
+  id
+  N
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR         writing actor
+  --session SESSION  writing session id
+  --json             print JSON
+  --reason TEXT      why, in one line
 ```
 
 ## trk ledger promote

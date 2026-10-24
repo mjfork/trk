@@ -385,6 +385,7 @@ class _Page:
         # The whole question, rendered like an item's sections; the feed and `trk waiting` keep the excerpt.
         detail = f'<div class="question">{self.ledger_mentions(markdown.to_html(question), parent["id"])}</div>\n' \
             if question.strip() and question.strip() != row["title"] else ""
+        detail += self.ask_options(row)
         facts = [("Waiting on", f"{_e(row['addressee_role'])} ({self.person(asks.resolve(self.conn, row))})"),
                  ("Asked by", self.who(row["asker"])), ("Opened", stamp(asks.opened_at(self.conn, row))),
                  ("Urgency", _e(asks.urgency(self.conn, row, self.now, as_of=True)["reason"])),
@@ -400,6 +401,18 @@ class _Page:
         return (f'<div class="{cls}"{_attr("ask-" + row["id"])}>\n'
                 f'<p class="q"><strong>{self.ask_link(row, _e(row["title"]))}</strong>{urgent}</p>\n{detail}{reply}'
                 f'<dl class="facts">{dl}</dl>\n<p class="cta">Answer by commenting on this box</p>\n</div>')
+
+    def ask_options(self, row):
+        """The ask's options as a numbered list, the recommended one marked; empty when it has none."""
+        listed = asks.options(self.conn, row["id"])
+        if not listed or not listed["options"]:
+            return ""
+        recommended = listed.get("recommended")
+        lines = "".join(
+            f'<li value="{_e(str(o.get("n")))}">{_e(str(o.get("label")))}'
+            + (' <span class="flag">recommended</span>' if o.get("n") == recommended else "") + "</li>\n"
+            for o in listed["options"] if isinstance(o, dict))
+        return f'<ol class="options">\n{lines}</ol>\n'
 
     # --- rollup tables of direct children ---
 
@@ -496,7 +509,8 @@ class _Page:
 
     def latest_counting(self, row, gate, kind=None):
         """The latest row for a gate (and of a kind) that counts, as Stage gates weighs it; None if none does."""
-        found = [r for r in self.weighed(row) if r["counts"] and r["gate"] == gate and kind in (None, r["kind"])]
+        found = [r for r in self.weighed(row) if r["counts"] and not r["red_first"] and r["gate"] == gate
+                 and kind in (None, r["kind"])]
         return found[-1] if found else None
 
     def evidence(self):
@@ -508,7 +522,7 @@ class _Page:
             criterion = self.handle_link(self.row["id"], f"ac-{r['criterion_n']}", _e(
                 f"ac-{r['criterion_n']}" + (f" v{r['criterion_version']}" if r["criterion_version"] else ""))) \
                 if r["criterion_n"] is not None else "—"
-            cells = [_e(r["gate"]), _e(r["kind"]), criterion, _e(r["verdict"] or "—"),
+            cells = [_e(r["gate"]), _e(r["kind"]), criterion, _e(evidence.verdict_label(r) or "—"),
                      self.commit_link(self.row, r["sha"]) if r["sha"] else "—", self.who(r["actor"]),
                      stamp(r["created_at"]), self.ledger_mentions(_e(r["note"]), self.row["id"])]
             struck = ' class="retracted"' if r["reason"] == "retracted" else ""
@@ -550,12 +564,16 @@ class _Page:
                 ask = items.get(self.conn, tied["ask_id"])
                 if ask["status"] == "open" and not (settled is not None and settled["ask"] == ask["id"]):
                     linked.append(self.ask_link(ask, _e(ask["title"])))  # a closed ask's box is gone from the page
+            withdrawn = ledger.withdrawal(self.conn, item_id, entry["n"])  # listed, marked, never hidden
+            if withdrawn is not None:
+                linked.append(f"withdrawn: {_e(withdrawn['reason'])}")
             alternatives = "; ".join(_alternatives(entry["alternatives"]))
             mention = lambda text: self.ledger_mentions(text, item_id)  # noqa: E731
             cells = [_e(entry["kind"]), mention(markdown.inline(entry["decided"])), mention(_e(alternatives)) or "—",
                      mention(markdown.inline(entry["why"])), _e(entry["origin"]), _e(verdict["verdict"]) if verdict else "—",
                      _e(settled["settlement"]) if settled else "—", ", ".join(linked) or "—"]
-            lines.append(f'<tr{_attr("ledger-" + str(entry["n"]))}>' + "".join(f"<td>{c}</td>" for c in cells)
+            struck = ' class="retracted"' if withdrawn is not None else ""
+            lines.append(f'<tr{struck}{_attr("ledger-" + str(entry["n"]))}>' + "".join(f"<td>{c}</td>" for c in cells)
                          + "</tr>")
         head = "".join(f"<th>{name}</th>" for name in
                        ("Kind", "Decided", "Alternatives", "Why", "Origin", "Verdict", "Settlement", "Linked"))

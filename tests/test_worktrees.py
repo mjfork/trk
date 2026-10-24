@@ -407,12 +407,13 @@ def test_a_schema_9_store_migrates_to_10_in_one_step_with_both_fields(trk, v9_st
 
     assert trk("changes", "--since", str(head), "--json").json()["changes"] == []  # migrates, journals nothing
 
-    assert query(v9_store, "SELECT value FROM meta WHERE key = 'schema_version'")[0][0] == "10" == str(
+    assert query(v9_store, "SELECT value FROM meta WHERE key = 'schema_version'")[0][0] == str(
         store.SCHEMA_VERSION)
     columns = [row["name"] for row in query(v9_store, "PRAGMA table_info(items)")]
     assert [tuple(r)[:len(items_before[0])] for r in query(v9_store, "SELECT * FROM items ORDER BY id")] == items_before
     assert {"worktree_path", "worktree_branch", "worktree_repo", "worktree_session", "worktree_at",
             "archive"} <= set(columns)
+    assert query(v9_store, "SELECT count(*) FROM ledger_withdrawals")[0][0] == 0  # schema 11's table, empty
 
     t = query(v9_store, "SELECT id FROM items WHERE title = 'T'")[0][0]
     p = query(v9_store, "SELECT id FROM items WHERE title = 'P'")[0][0]

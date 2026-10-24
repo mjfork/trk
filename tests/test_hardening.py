@@ -25,7 +25,7 @@ ASKS_AND_OWNERS_KINDS = {
 }
 HANDOFF_KINDS = {"handoff.added"}
 GATES_KINDS = {"stage.changed", "criterion.added", "criterion.edited", "criterion.retired", "evidence.added",
-               "ledger.added", "ledger.verdict", "ledger.settled", "ledger.promoted"}
+               "ledger.added", "ledger.verdict", "ledger.settled", "ledger.promoted", "ledger.withdrawn"}
 # Written only by a publish or a comment pull, which need the in-process fake service the subprocess scenario
 # can't reach: tests/test_pages_flush.py and tests/test_pages_replies.py write them, and the suite-wide feed
 # check validates every row they write.
@@ -74,11 +74,17 @@ def every_kind(trk_home, tmp_path):
     write("evidence", "retract", t, wrong, "--note", "Wrong PR.")
     s = write("new", "work-item", "S", "--form", "self-contained", "--parent", j, *ticket("self-contained"))
     write("advance", s, "--judgment", "The repro is complete.")
+    for argv in accepting(j):
+        write(*argv)
+    write("claim", t, "--session", "s0")
     write("ledger", "add", t, "--kind", "fork", "--decided", "Kept the cache", "--alternative", "Dropped it",
           "--why", "Reads are hot", "--session", "s0")
     write("ledger", "verdict", t, "1", "wrong", "--note", "It goes stale.", "--as", "bob", "--session", "s9")
     write("ledger", "settle", t, "1", "fixed", "--sha", "abcdef2", "--session", "s0")
     write("ledger", "promote", t, "1", "--adr", "docs/adr/0003-cache.md")
+    write("ledger", "add", t, "--kind", "fork", "--decided", "Typed twice", "--alternative", "Once", "--why", "Slip",
+          "--session", "s0")
+    write("ledger", "withdraw", t, "2", "--reason", "Written twice by mistake.")
     write("config", "set", "template-parent", j)
     write("ledger", "add", s, "--kind", "fork", "--decided", "Guessed m3/h", "--alternative", "l/s", "--why", "Usual",
           "--origin", "auditor", "--repeat-of", f"{t}:1", "--topic", "units", "--as", "bob", "--session", "s9")
@@ -94,8 +100,6 @@ def every_kind(trk_home, tmp_path):
     write("answer", a, "--outcome", "m3/h", "--answer", "-", stdin="Cubic metres per hour.")
     write("reopen", a, "--reason", "Which flow, though?", "--as", "bob")
     write("withdraw", a, "--reason", "Settled elsewhere.", "--as", "bob")
-    for argv in accepting(j):
-        write(*argv)
     write("link", e, "blocks", d)
     write("unlink", e, "blocks", d)
     write("move", e, "--first")

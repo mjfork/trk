@@ -155,7 +155,7 @@
     },
     "status_fields": {
       "description": "On the kinds Core writes, status_old and status_new are null except on item.created and ask.opened (null -> open), item.closed, ask.answered and ask.withdrawn (open -> closed), and item.reopened and ask.reopened (closed -> open); ask.readdressed and ask.replied carry none. Unknown kinds are not constrained.",
-      "if": {"properties": {"change": {"enum": ["ask.readdressed", "ask.replied", "comment.routed", "comment.acknowledged", "item.updated", "item.moved", "owner.changed", "claim.taken", "claim.renewed", "claim.released", "claim.expired", "spec.changed", "edge.added", "edge.removed", "actor.added", "actor.updated", "role.set", "config.changed", "handoff.added", "page.created", "stage.changed", "criterion.added", "criterion.edited", "criterion.retired", "evidence.added", "ledger.added", "ledger.verdict", "ledger.settled", "ledger.promoted"]}}, "required": ["change"]},
+      "if": {"properties": {"change": {"enum": ["ask.readdressed", "ask.replied", "comment.routed", "comment.acknowledged", "item.updated", "item.moved", "owner.changed", "claim.taken", "claim.renewed", "claim.released", "claim.expired", "spec.changed", "edge.added", "edge.removed", "actor.added", "actor.updated", "role.set", "config.changed", "handoff.added", "page.created", "stage.changed", "criterion.added", "criterion.edited", "criterion.retired", "evidence.added", "ledger.added", "ledger.verdict", "ledger.settled", "ledger.promoted", "ledger.withdrawn"]}}, "required": ["change"]},
       "then": {"properties": {"status_old": {"type": "null"}, "status_new": {"type": "null"}}}
     },
     "kinds": {
@@ -513,7 +513,7 @@
               "data": {
                 "required": ["key", "old", "new"],
                 "properties": {
-                  "key": {"enum": ["default-owner", "shared-agent", "template-parent", "publish-backend", "publish-base-url", "publish-dir", "publish-token-file", "publish-team", "publish-token-expires", "publish-home"], "description": "default-owner, shared-agent and template-parent are `trk config set`'s; the publish-* keys are `trk pages setup`'s (Page publisher). The token secret is never a value."},
+                  "key": {"enum": ["default-owner", "shared-agent", "template-parent", "release-verify-job", "publish-backend", "publish-base-url", "publish-dir", "publish-token-file", "publish-team", "publish-token-expires", "publish-home"], "description": "default-owner, shared-agent, template-parent and release-verify-job are `trk config set`'s; the publish-* keys are `trk pages setup`'s (Page publisher). The token secret is never a value."},
                   "old": {"$ref": "#/$defs/nullable_id", "description": "null when init or the schema 2 migration first sets the default owner, when the template parent is first set, or when the first `pages setup` sets a publish-* key; the shared agent starts as worker."},
                   "new": {"$ref": "#/$defs/id", "description": "An actor; for template-parent and publish-home, an item id; for publish-backend a backend name; for the other publish-* keys a URL, absolute file path, team slug or YYYY-MM-DD date."}
                 }
@@ -746,6 +746,19 @@
                   "verdict_seq": {"type": ["integer", "null"], "description": "An auditor's settle of a contradiction with no ask: the seq of the SOUND verdict it relied on; null otherwise. Absent on rows written before tr-w40vn."},
                   "verdict_sha": {"anyOf": [{"$ref": "#/$defs/sha"}, {"type": "null"}], "description": "The sha of that verdict; null otherwise."}
                 }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ledger.withdrawn"}}},
+          "then": {
+            "description": "A ledger row withdrawn with a one-line reason; the row stays on the ticket, marked withdrawn, and no gate counts it.",
+            "$ref": "#/$defs/ledger_row",
+            "properties": {
+              "data": {
+                "required": ["reason"],
+                "properties": {"reason": {"$ref": "#/$defs/excerpt"}}
               }
             }
           }

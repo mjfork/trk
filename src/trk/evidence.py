@@ -9,7 +9,7 @@ import json
 import re
 import secrets
 
-from . import clock, criteria, gitrepo, ids
+from . import actors, claims, clock, criteria, gitrepo, ids, roles
 from .errors import not_found, refused, usage
 
 ID_LENGTH = 6
@@ -62,8 +62,25 @@ NOT_WEIGHED = ("review", "plan", "doc", "retract")
 # The kinds that prove a criterion: for `verified`, and with `judgment` for `close`.
 RUNS = ("test-run", "webtester-run", "human-accept")
 
+# Kinds that can be a red-first proof: a run meant to fail, at a base before the fix, showing the test catches
+# the defect. Stored as a `fail` run with `detail.red_first`, so the schema and the feed carry the same verdicts.
+RED_FIRST_KINDS = ("test-run", "webtester-run")
+RED_FIRST_LABEL = "failed as intended"
+
+# Kinds the builder records on a ticket: the writer must hold the ticket's claim (`claims.require_held`).
+BUILDER_KINDS = ("pr", "test-run", "merge")
+
 # Kinds a closed item still takes (besides a retraction).
 ON_CLOSED = ("review", "doc")
+
+# A program's close is harder to meet than a project's (tr-43mme, from tr-tfk26's hardened plan): no `judgment`
+# counts, a run needs a release sha, and a `human-accept` counts only from the acceptor the criterion names.
+RELEASE_RUNS = ("test-run", "webtester-run")
+PROGRAM_CLOSE_REASONS = ("program-judgment", "no-release-sha", "no-acceptor-named", "not-acceptor")
+
+# A criterion names its one acceptor in its text: `accept-by: michael` or `accept-by: security`, the name an actor id
+# or a role (a role stands for the actor holding it now). Michael's ruling 2026-10-24 (A1): one acceptor, not several.
+_ACCEPT_BY = re.compile(r"\baccept-by:\s*([a-z0-9][a-z0-9_-]*)", re.IGNORECASE)
 
 _FLAG = {"ref": "--ref", "sha": "--sha", "criterion": "--criterion", "detail": "detail", "verdict": "--verdict"}
 
@@ -86,6 +103,33 @@ def check_sha(sha):
     if not _SHA.fullmatch(lowered):
         raise usage(f"--sha is 7 to 40 hex chars, got {sha!r}")
     return lowered
+
+
+def acceptor(conn, text):
+    """The actor a criterion's `accept-by:` marker names (a role resolves to its holder), or None when it names no
+    one that exists."""
+    found = _ACCEPT_BY.search(text or "")
+    if found is None:
+        return None
+    name = found.group(1).lower()
+    if conn.execute("SELECT 1 FROM actors WHERE id = ?", (name,)).fetchone():
+        return name
+    return roles.holder(conn, name)
+
+
+def _program_close_reason(conn, row, texts):
+    """Why a program `close` row cannot count, or None (`PROGRAM_CLOSE_REASONS`)."""
+    if row["kind"] == "judgment":
+        return "program-judgment"
+    if row["kind"] in RELEASE_RUNS and not row["sha"]:
+        return "no-release-sha"
+    if row["kind"] == "human-accept":
+        named = acceptor(conn, texts.get(row["criterion_n"]))
+        if named is None:
+            return "no-acceptor-named"
+        if row["actor"] != named or actors.kind(conn, row["actor"]) != "human":
+            return "not-acceptor"
+    return None
 
 
 def gates_of(row):
@@ -145,13 +189,18 @@ def record(tx, row, kind, gate, *, criterion=None, ref=None, sha=None, verdict=N
          json.dumps(detail) if detail is not None else None, tx.actor, tx.session, seq, clock.stamp(tx.now)),
     )
     conn.execute("UPDATE items SET updated_at = ? WHERE id = ?", (clock.stamp(tx.now), row["id"]))
+    if kind in ("pr", "test-run"):  # a new builder session: an open RED-read ask's byline may change
+        items.refresh_builder_asks(tx, row["id"])
     return evidence_id
 
 
-def add(tx, raw_id, kind, gate, *, criterion=None, ref=None, sha=None, verdict=None, note=None, direct=False):
+def add(tx, raw_id, kind, gate, *, criterion=None, ref=None, sha=None, verdict=None, note=None, direct=False,
+        red_first=False):
     """`evidence add`: one row of a kind agents record, checked against the kinds table; returns its id.
     A `human-review` pass also answers the ticket's open RED-read ask when it counts (`blast.answer_red_ask`).
-    `direct` (only `blast.review_record` passes it) allows the reserved `direct:` ref."""
+    `direct` (only `blast.review_record` passes it) allows the reserved `direct:` ref.
+    `red_first` records a run that failed on purpose: it needs a run kind, gate `verified` and a criterion, and
+    takes no verdict but `fail`."""
     from . import items
 
     if kind in MANAGED:
@@ -170,11 +219,20 @@ def add(tx, raw_id, kind, gate, *, criterion=None, ref=None, sha=None, verdict=N
         raise refused("reserved-ref", "a ref starting direct: marks a person's direct approval, which only"
                       " `trk review record` without --ref writes", item=row["id"])
     criterion_row = _live_criterion(tx.conn, row, criterion) if criterion is not None else None
+    if red_first:
+        if kind not in RED_FIRST_KINDS or gate != "verified" or criterion_row is None:
+            raise usage(f"--red-first: a {' or '.join(RED_FIRST_KINDS)} row for gate verified that names a --criterion")
+        if verdict not in (None, "fail"):
+            raise usage("--red-first: a red-first run fails by definition; drop --verdict or use --verdict fail")
+        verdict = "fail"
     fields = {"ref": ref, "sha": sha, "criterion": criterion_row, "detail": None, "verdict": verdict}
     _check_table(row, kind, gate, fields)
+    if kind in BUILDER_KINDS and row["form"] in ("spec_bound", "self_contained"):
+        claims.require_held(tx, row, f"{kind} evidence")
     if VERDICT[kind] == "pass":
         verdict = "pass"
-    evidence_id = record(tx, row, kind, gate, criterion=criterion_row, ref=ref, sha=sha, verdict=verdict, note=note)
+    evidence_id = record(tx, row, kind, gate, criterion=criterion_row, ref=ref, sha=sha, verdict=verdict, note=note,
+                         detail={"red_first": True} if red_first else None)
     if kind == "human-review" and verdict == "pass":
         from . import blast  # a gates module: loaded only for a human review
 
@@ -225,11 +283,12 @@ class Weighing:
 
     def latest(self, kinds, gate, criterion_n=None):
         """The group's decider: the latest counting row of `kinds` for `gate` (and criterion), or None."""
-        return self._last(kinds, gate, criterion_n, lambda row: row["counts"])
+        return self._last(kinds, gate, criterion_n, lambda row: row["counts"] and not row["red_first"])
 
     def unverifiable(self, kinds, gate, criterion_n=None):
         """The group's latest row when only git's answer keeps it from counting (`sha-unverifiable`), else None."""
-        row = self._last(kinds, gate, criterion_n, lambda row: row["reason"] in (None, "wrong-sha", "sha-unverifiable"))
+        row = self._last(kinds, gate, criterion_n, lambda row: not row["red_first"]
+                         and row["reason"] in (None, "wrong-sha", "sha-unverifiable"))
         return row if row is not None and row["reason"] == "sha-unverifiable" else None
 
     def _last(self, kinds, gate, criterion_n, keep):
@@ -249,6 +308,8 @@ def weigh(conn, item):
     rows = [dict(r) for r in conn.execute("SELECT * FROM evidence WHERE item_id = ? ORDER BY seq", (item["id"],))]
     retracted = {r["ref"] for r in rows if r["kind"] == "retract"}
     versions = dict(conn.execute("SELECT n, version FROM criteria WHERE item_id = ?", (item["id"],)).fetchall())
+    texts = dict(conn.execute("SELECT n, text FROM criteria WHERE item_id = ?", (item["id"],)).fetchall())
+    program = item["kind"] == "program"
     drafted = _latest_draft(conn, item) if any(r["gate"] == "accept" for r in rows) else None
     cut = _cut_offs(conn, item) if rows else {}
     for r in rows:
@@ -258,6 +319,8 @@ def weigh(conn, item):
             r["reason"] = "not-weighed"
         elif r["criterion_n"] is not None and r["criterion_version"] != versions.get(r["criterion_n"]):
             r["reason"] = "old-version"
+        elif program and r["gate"] == "close" and (why := _program_close_reason(conn, r, texts)):
+            r["reason"] = why
         elif r["seq"] < cut.get(r["gate"], 0):
             r["reason"] = "before-reopen"
         elif r["gate"] == "accept" and drafted is not None and r["seq"] < drafted:
@@ -268,10 +331,67 @@ def weigh(conn, item):
     merge = _latest_sha(rows, "merge", "merged")
     repo = _Repo(conn, item["id"])
     for r in rows:
+        r["red_first"] = _is_red_first(r) and not _at_or_after_base(repo, r, head, merge, bool(item["merged_skipped"]))
         if r["reason"] is None:
             r["reason"] = _sha_reason(repo, r, head, merge, bool(item["merged_skipped"]))
         r["counts"] = r["reason"] is None
+    _count_landing_reviews(repo, rows, head, merge)
+    paired = {(r["criterion_n"]) for r in rows
+              if r["counts"] and not r["red_first"] and r["gate"] == "verified" and r["kind"] in RUNS
+              and r["verdict"] == "pass"}
+    for r in rows:
+        if r["counts"] and r["red_first"] and r["criterion_n"] not in paired:
+            r["reason"], r["counts"] = "unpaired-red-first", False
     return Weighing(rows, head, merge, repo)
+
+
+def _count_landing_reviews(repo, rows, head, merge):
+    """A `human-review` at the merge sha counts, as one at the head would, while the ticket's latest counting
+    `blast-radius` row is a late-rules rating of that merge (`_late_rating`) listing exactly the paths the merge
+    landed: the reviewer read the merge's diff, so the rating must hold no path outside it (`_covers_landing`).
+    Otherwise a review is of the head only."""
+    if not head or not merge or gitrepo.same(repo.get(head, merge), head, merge) is not False:
+        return
+    waiting = [r for r in rows if r["kind"] == "human-review" and r["gate"] == "merged" and r["reason"] == "wrong-sha"
+               and r["sha"] and gitrepo.same(repo.get(r["sha"], merge), r["sha"], merge) is True]
+    rating = next((r for r in reversed(rows) if r["kind"] == "blast-radius" and r["gate"] == "merged" and r["counts"]), None)
+    if waiting and rating is not None and gitrepo.same(repo.get(head, rating["sha"]), head, rating["sha"]) is False \
+            and _covers_landing(repo, rating, head, merge):
+        for r in waiting:
+            r["reason"], r["counts"] = None, True
+
+
+def _covers_landing(repo, row, head, merge):
+    """Whether the late rating `row` lists exactly what `merge` landed: its recorded merge is `merge`, `base...head` holds
+    no path outside `pre...merge` (`gitrepo.landing_paths`), and the files the row itself lists (with its sensitive
+    counts) are that many paths of `pre...merge`, as a rating made before late ratings listed only the landing, which
+    carries a later PR's files, is not."""
+    detail = json.loads(row["detail"]) if row["detail"] else {}
+    anchor, base = detail.get("merge"), detail.get("base")
+    if not anchor or not base:
+        return False
+    placed = repo.get(merge, head, base, anchor)
+    if gitrepo.same(placed, anchor, merge) is not True:
+        return False
+    landed = gitrepo.landing(placed, head, merge)
+    found = gitrepo.landing_paths(placed, base, head, merge, landed) if landed else None
+    if found is None or not set(found[1]) <= set(found[0]):
+        return False
+    listed = {f["path"] for f in detail.get("files", ())}
+    hidden = sum(d.get("green", 0) + d.get("yellow", 0) + d.get("red", 0) for d in detail.get("sensitive", ()))
+    return listed <= set(found[0]) and len(listed) + hidden == len(set(found[0]))
+
+
+def _at_or_after_base(repo, row, head, merge, merged_skipped):
+    """Whether a red-first row's sha is the merge (or head, once Merged is skipped) or a descendant of it. Such a
+    row is no base before the fix, so it is weighed as an ordinary fail run: a failure there must not hide."""
+    base = merge or (head if merged_skipped else None)
+    return bool(base) and gitrepo.contains(repo.get(row["sha"], base), base, row["sha"]) is True
+
+
+def _is_red_first(row):
+    """Whether the row is a red-first proof (`detail.red_first`)."""
+    return bool(row["detail"]) and bool(json.loads(row["detail"]).get("red_first"))
 
 
 def _latest_draft(conn, item):
@@ -326,8 +446,13 @@ class _Repo:
 def _sha_reason(repo, row, head, merge, merged_skipped):
     """`wrong-sha` or `sha-unverifiable` when the row's sha is not valid for its gate, else None."""
     kind, gate, sha = row["kind"], row["gate"], row["sha"]
-    if kind == "test-run" and gate == "built" or kind in ("blast-radius", "human-review") and gate == "merged":
+    if row["red_first"]:  # a base before the fix: an ancestor of the merge, not a descendant
+        base = merge or (head if merged_skipped else None)
+        verdict = gitrepo.contains(repo.get(sha, base), sha, base) if base else None
+    elif kind == "test-run" and gate == "built" or kind in ("blast-radius", "human-review") and gate == "merged":
         verdict = gitrepo.same(repo.get(head, sha), head, sha) if head and sha else True
+        if kind == "blast-radius" and verdict is not True and merge and sha and head:
+            verdict = _late_rating(repo, row, head, merge, sha, verdict)
     elif kind == "audit" and gate == "merged":
         verdict = gitrepo.contains(repo.get(sha, head), sha, head) if head and sha else True
     elif kind in RUNS and gate == "verified":
@@ -335,7 +460,44 @@ def _sha_reason(repo, row, head, merge, merged_skipped):
         verdict = gitrepo.contains(repo.get(base, sha), base, sha) if base else None  # unplaceable until there is a merge
     else:
         verdict = True
-    return {True: None, False: "wrong-sha", None: "sha-unverifiable"}[verdict]
+    reason = {True: None, False: "wrong-sha", None: "sha-unverifiable"}[verdict]
+    if reason is None and kind == "blast-radius" and gate == "merged":
+        reason = _base_hides(repo, row, head, merge, sha)
+    return reason
+
+
+def _base_hides(repo, row, head, merge, sha):
+    """`base-hides-pr` (or `sha-unverifiable`) for a `blast-radius` row whose recorded base leaves out commits of the PR
+    (`gitrepo.hides_pr`), the check `trk blast-radius` made then made again with what the ticket knows now: a merge row
+    that is a merge commit of the head, or a squash or rebase merge, gives the branch the PR merged into as it stood
+    before (its first parent), which a rating recorded earlier could not see. None for a row that records no base (made before the check) or has none
+    hidden."""
+    base = (json.loads(row["detail"]) if row["detail"] else {}).get("base")
+    if not base or not head or not sha:
+        return None
+    path = repo.get(head, sha, base, *([merge] if merge else []))
+    if path is None:  # no checkout holds them (the rating named one with --repo): as before
+        return None
+    before = gitrepo.merge_parent(path, head, merge) if merge else None
+    hides = gitrepo.hides_pr(path, base, sha, head, before)
+    return "sha-unverifiable" if hides is None else "base-hides-pr" if hides else None
+
+
+def _late_rating(repo, row, head, merge, sha, otherwise):
+    """A `blast-radius` row at neither the head nor the merge sha (a repo that got its rules after the PR merged
+    cannot be rated at either): valid, as one at the head would be, when `trk blast-radius` rated it against this
+    same merge row (its detail's `merge`, set only when the merge was in the ticket then, so a rating made before
+    the merge row never counts) and `gitrepo.late_rating` holds for its `base`. `otherwise` is the answer for the
+    head check when not."""
+    detail = json.loads(row["detail"]) if row["detail"] else {}
+    anchor, base = detail.get("merge"), detail.get("base")
+    if not anchor or not base:
+        return otherwise
+    placed = repo.get(merge, sha, head, base, anchor)
+    if gitrepo.same(placed, anchor, merge) is not True:
+        return otherwise
+    held = gitrepo.late_rating(placed, head, merge, sha, base)
+    return held if held is not False else otherwise
 
 
 def summary(row):
@@ -367,8 +529,14 @@ def to_json(row):
         "criterion_version": row["criterion_version"], "ref": row["ref"], "sha": row["sha"],
         "verdict": row["verdict"], "note": row["note"], "detail": json.loads(detail) if detail else None,
         "actor": row["actor"], "session": row["session"], "seq": row["seq"], "created_at": row["created_at"],
-        "counts": row["counts"], "reason": row["reason"],
+        "counts": row["counts"], "reason": row["reason"], "red_first": row["red_first"],
     }
+
+
+def verdict_label(row):
+    """What a listing or page shows for a row's verdict: `failed as intended` for a red-first run, else the
+    verdict itself (None when it has none)."""
+    return RED_FIRST_LABEL if row["red_first"] else row["verdict"]
 
 
 def listing(conn, raw_id, gate=None):
