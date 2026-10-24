@@ -1,0 +1,9 @@
+[Unit]
+Description=Run trk pages tick about every minute
+
+[Timer]
+OnActiveSec=60s
+OnUnitActiveSec=60s
+
+[Install]
+WantedBy=timers.target

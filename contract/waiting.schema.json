@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/waiting.schema.json",
+  "title": "trk waiting --json",
+  "description": "The response of `trk waiting [--me <actor> | --all] [--root <id>] --json` (spec 02, Waiting on me): open asks, highest urgency score first, then by id. Each is the item JSON item.schema.json pins, with two changes: `parent` is the blocked item as {id, title, kind, form} instead of its id, and `age_seconds` is added; `urgency` is an optional addition. Additional fields are allowed.",
+  "type": "object",
+  "required": [
+    "schema",
+    "asks"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "asks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "form",
+          "subtype",
+          "title",
+          "root",
+          "depth",
+          "rank",
+          "urgent",
+          "owner",
+          "effective_owner",
+          "status",
+          "resolution",
+          "outcome",
+          "spec_state",
+          "jira_url",
+          "repos",
+          "sections",
+          "edges",
+          "children",
+          "open_asks",
+          "blocked",
+          "in_progress",
+          "claim",
+          "ready",
+          "why_not",
+          "created_at",
+          "updated_at",
+          "closed_at",
+          "addressee_role",
+          "addressee",
+          "addressee_kind",
+          "asker",
+          "parent",
+          "age_seconds"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "item.schema.json#/properties/id"
+          },
+          "kind": {
+            "$ref": "item.schema.json#/properties/kind"
+          },
+          "form": {
+            "const": "ask"
+          },
+          "subtype": {
+            "$ref": "item.schema.json#/properties/subtype"
+          },
+          "title": {
+            "$ref": "item.schema.json#/properties/title"
+          },
+          "root": {
+            "$ref": "item.schema.json#/properties/root"
+          },
+          "depth": {
+            "$ref": "item.schema.json#/properties/depth"
+          },
+          "rank": {
+            "$ref": "item.schema.json#/properties/rank"
+          },
+          "urgent": {
+            "$ref": "item.schema.json#/properties/urgent"
+          },
+          "owner": {
+            "$ref": "item.schema.json#/properties/owner"
+          },
+          "effective_owner": {
+            "$ref": "item.schema.json#/properties/effective_owner"
+          },
+          "client": {
+            "$ref": "item.schema.json#/properties/client"
+          },
+          "effective_client": {
+            "$ref": "item.schema.json#/properties/effective_client"
+          },
+          "status": {
+            "const": "open"
+          },
+          "resolution": {
+            "$ref": "item.schema.json#/properties/resolution"
+          },
+          "outcome": {
+            "$ref": "item.schema.json#/properties/outcome"
+          },
+          "spec_state": {
+            "$ref": "item.schema.json#/properties/spec_state"
+          },
+          "jira_url": {
+            "$ref": "item.schema.json#/properties/jira_url"
+          },
+          "repos": {
+            "$ref": "item.schema.json#/properties/repos"
+          },
+          "sections": {
+            "$ref": "item.schema.json#/properties/sections"
+          },
+          "edges": {
+            "$ref": "item.schema.json#/properties/edges"
+          },
+          "children": {
+            "$ref": "item.schema.json#/properties/children"
+          },
+          "open_asks": {
+            "$ref": "item.schema.json#/properties/open_asks"
+          },
+          "blocked": {
+            "$ref": "item.schema.json#/properties/blocked"
+          },
+          "in_progress": {
+            "$ref": "item.schema.json#/properties/in_progress"
+          },
+          "claim": {
+            "$ref": "item.schema.json#/properties/claim"
+          },
+          "ready": {
+            "$ref": "item.schema.json#/properties/ready"
+          },
+          "why_not": {
+            "$ref": "item.schema.json#/properties/why_not"
+          },
+          "created_at": {
+            "$ref": "item.schema.json#/properties/created_at"
+          },
+          "updated_at": {
+            "$ref": "item.schema.json#/properties/updated_at"
+          },
+          "closed_at": {
+            "$ref": "item.schema.json#/properties/closed_at"
+          },
+          "addressee_role": {
+            "$ref": "item.schema.json#/properties/addressee_role"
+          },
+          "addressee": {
+            "$ref": "item.schema.json#/properties/addressee"
+          },
+          "addressee_kind": {
+            "$ref": "item.schema.json#/properties/addressee_kind"
+          },
+          "asker": {
+            "$ref": "item.schema.json#/properties/asker"
+          },
+          "parent": {
+            "type": "object",
+            "description": "The item the ask blocks, in place of the item JSON's parent id.",
+            "required": [
+              "id",
+              "title",
+              "kind",
+              "form"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "item.schema.json#/properties/kind"
+              },
+              "form": {
+                "$ref": "item.schema.json#/properties/form"
+              }
+            }
+          },
+          "age_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Whole seconds since the ask was opened."
+          },
+          "urgency": {
+            "type": "object",
+            "description": "The ask's urgency at the moment of the read, computed and never stored: score = held_up x cache factor x 10 when urgent, to one decimal place. The list is sorted by score, highest first.",
+            "required": ["score", "base", "held_up", "minutes", "cache_warm"],
+            "properties": {
+              "score": {"type": "number", "minimum": 0},
+              "base": {"type": "integer", "minimum": 0, "description": "held_up x 10 when urgent: the score without the cache time factor, for a consumer that applies its own cache clock."},
+              "held_up": {"type": "integer", "minimum": 0, "description": "Distinct open non-ask items that cannot move until the ask is answered: its parent and what it reaches from the parent by blocks edges alone."},
+              "minutes": {"type": "integer", "minimum": 0, "description": "Whole minutes since the ask was last opened, reopened or readdressed by trk readdress (a role, owner or move re-route does not restart it)."},
+              "cache_warm": {"type": "boolean", "description": "Whether the asker's prompt cache is still inside the 60-minute window."},
+              "urgent": {"type": "boolean", "description": "Whether the x10 factor applied: the ask or its parent is urgent."},
+              "reason": {"type": "string", "description": "The line `trk waiting` shows; a page shows it with the render time inside the cache note (as of HH:MMZ)."}
+            }
+          }
+        }
+      }
+    }
+  }
+}

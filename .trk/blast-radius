@@ -1,0 +1,33 @@
+# Which changes need review before Merged (spec 03, Blast radius). Approved by Michael 2026-10-11 (tr-bqx0y).
+# A file takes the highest colour of the rules it matches; unmatched files are GREEN.
+# YELLOW: an independent audit and a verdict on every ledger row. RED: that, plus Michael's approval at the
+# head sha (`trk review record`; see spec 03's 2026-10-11 amendment for a repo with no GitHub remote).
+
+# The map decides who reviews, so changing it is reviewed by Michael.
+RED .trk/blast-radius
+# Schema, migrations and append-only triggers; the live store migrates through the editable install.
+RED src/trk/store.py
+# herdr's contract (ADR 0002): a break here breaks the herdr plugin silently.
+RED contract/**
+# Standing decisions.
+RED docs/adr/**
+
+# The gates themselves: a bug here lets work skip review or count bad evidence.
+YELLOW src/trk/stages.py
+YELLOW src/trk/evidence.py
+YELLOW src/trk/ledger.py
+YELLOW src/trk/blast.py
+YELLOW src/trk/gitrepo.py
+YELLOW src/trk/criteria.py
+# Feed rows, leases and the frontier every session and herdr rely on.
+YELLOW src/trk/feed.py
+YELLOW src/trk/claims.py
+YELLOW src/trk/ready.py
+# Run in every Claude session on the machine.
+YELLOW hooks/**
+# Standing instructions and vocabulary for every agent.
+YELLOW AGENTS.md
+YELLOW CONTEXT.md
+# What the live editable install runs.
+YELLOW pyproject.toml
+YELLOW uv.lock

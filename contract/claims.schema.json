@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/claims.schema.json",
+  "title": "trk claims --json",
+  "description": "The response of `trk claims [--session <uuid>] [--item <id>] --json`: live claims, oldest first (ADR 0002). Each is the item's `claim` object (item.schema.json) plus the item id. Additional fields are allowed.",
+  "type": "object",
+  "required": ["schema", "claims"],
+  "properties": {
+    "schema": {"const": 1},
+    "claims": {
+      "type": "array",
+      "items": {
+        "$ref": "item.schema.json#/$defs/claim",
+        "required": ["item"],
+        "properties": {"item": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/roles.schema.json",
+  "title": "trk roles --json",
+  "description": "The response of `trk roles --json`: every function role, sorted by name, with its holder's kind and display name (ADR 0002; spec 02). The relative role `parent` resolves per ask and is never listed. Additional fields are allowed.",
+  "type": "object",
+  "required": ["schema", "roles"],
+  "properties": {
+    "schema": {"const": 1},
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "actor", "actor_kind", "display"],
+        "properties": {
+          "role": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "not": {"const": "parent"}},
+          "actor": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+          "actor_kind": {"enum": ["human", "agent"]},
+          "display": {"type": "string"}
+        }
+      }
+    }
+  }
+}

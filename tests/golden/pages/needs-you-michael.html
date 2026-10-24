@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Needs you: Michael Fork</title>
+<style>:root{--bg:#fbfaf8;--fg:#1c1b19;--muted:#6b6862;--line:#e3e0da;--card:#ffffff;--accent:#2f5bd3;
+--ok:#1f7a45;--warn:#a5600a;--bad:#b42318;--pill:#eef1fb}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#ecebe8;--muted:#a19e98;--line:#2e2d2b;--card:#1c1c1b;
+--accent:#86a6ff;--ok:#5cc98a;--warn:#e2a54a;--bad:#ff7b6e;--pill:#232838}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.board{max-width:980px;margin:0 auto;padding:16px}
+a{color:var(--accent)}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em}
+pre{overflow-x:auto;background:var(--card);border:1px solid var(--line);padding:8px;border-radius:6px}
+h1{font-size:1.5rem;margin:.2rem 0 .5rem}
+h2{font-size:1.1rem;margin:0;display:inline}
+.head{border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:16px}
+.crumbs{color:var(--muted);font-size:.9rem}
+.crumbs span{margin:0 .3rem}
+.pill,.flag,.tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:.8rem;background:var(--pill)}
+.flag.blocked,.flag.urgent{color:var(--bad)}
+.flag.progress{color:var(--warn)}
+.flag.closed{color:var(--muted)}
+.facts{display:flex;flex-wrap:wrap;gap:4px 20px;margin:0}
+.facts div{display:flex;gap:6px}
+.facts dt{color:var(--muted)}
+.facts dd{margin:0}
+.outcome{color:var(--muted)}
+.handoff{font-size:.9rem;color:var(--muted)}
+.tiles{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-width:110px}
+.tile .n,.funnel .n{display:block;font-size:1.3rem;font-weight:600}
+.tile .l,.funnel .l,.pipeline .l{color:var(--muted);font-size:.85rem}
+.funnel,.pipeline{display:flex;flex-wrap:wrap;gap:6px;list-style:none;padding:0;margin:0}
+.funnel li,.pipeline li{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.pipeline li.reached{border-color:var(--ok)}
+.pipeline li.current{border-color:var(--accent);border-width:2px}
+.pipeline li.ahead{opacity:.6}
+.ev{display:block;font-size:.8rem;color:var(--muted)}
+.waiting{margin:0 0 20px}
+.waiting h2{display:block;margin-bottom:8px}
+.waiting .clear{color:var(--ok);font-weight:600;margin:0}
+.ask{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:8px;
+padding:8px 12px;margin:0 0 8px}
+.ask.urgent{border-left-color:var(--bad)}
+.ask .q{margin:0 0 4px}
+.ask .question>:first-child{margin-top:0}
+.ask .reply{margin:0 0 4px;font-size:.9rem}
+.ask .facts{font-size:.88rem}
+.ask .cta{margin:4px 0 0;font-size:.85rem;color:var(--muted)}
+.rollup,.section{margin:0 0 18px}
+summary{cursor:pointer;margin-bottom:6px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600}
+tr.closed{color:var(--muted)}
+tr.retracted td,li.retired{text-decoration:line-through;color:var(--muted)}
+.none{color:var(--muted);margin:4px 0}
+meter{width:70px}
+.criteria li{margin:3px 0}
+.criteria .ev{display:inline}
+.criteria li.ev-pass .ev{color:var(--ok)}
+.criteria li.ev-fail .ev{color:var(--bad)}
+.criteria .h{color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em}
+blockquote{margin:0;padding-left:12px;border-left:3px solid var(--line);color:var(--muted)}
+.board.needs-you .root{margin:0 0 2px;font-size:.85rem;color:var(--muted)}</style>
+</head>
+<body>
+<main class="board needs-you">
+<header class="head" data-comment-id="header">
+<div class="pills"><span class="pill">needs you</span></div>
+<h1>Needs you: Michael Fork</h1>
+<dl class="facts"><div><dt>Person</dt><dd>Michael Fork</dd></div><div><dt>Waiting on you</dt><dd>1</dd></div><div><dt>Blocked on you</dt><dd>2</dd></div></dl>
+<p class="outcome">Everything waiting on this person, across every program. Answer an ask by commenting on its box, here or on its program's page.</p>
+</header>
+<section class="waiting" data-comment-id="waiting">
+<h2>Waiting on you</h2>
+<p class="root">Program: Tracker v1</p>
+<div class="ask" data-comment-id="ask-tr-252xh">
+<p class="q"><strong>Publish now?</strong></p>
+<div class="question"><p>Ready?</p></div>
+<dl class="facts"><div><dt>Waiting on</dt><dd>parent (Michael Fork)</dd></div><div><dt>Asked by</dt><dd>worker</dd></div><div><dt>Opened</dt><dd>2026-10-11 09:24Z</dd></div><div><dt>Urgency</dt><dd>score 1.0 · holds up 1 · waiting 2m (cache warm, 58m left, as of 09:26Z)</dd></div><div><dt>On</dt><dd>Tracker v1</dd></div></dl>
+<p class="cta">Answer by commenting on this box</p>
+</div>
+</section>
+<section class="rollup" data-comment-id="blocked">
+<h2>Blocked on you</h2>
+<div class="scroll"><table>
+<thead><tr><th>Item</th><th>Kind</th><th>Program</th><th>Blocked by</th></tr></thead>
+<tbody>
+<tr data-comment-id="blocked-tr-fk6sy"><td>Tracker v1</td><td>program</td><td>Tracker v1</td><td>ask Publish now? <span class="tag">parent</span> <span class="ev">opened 2026-10-11 09:24Z</span></td></tr>
+<tr data-comment-id="blocked-tr-j3eqh"><td>Render a page <span class="flag urgent">urgent</span></td><td>work item · spec-bound</td><td>Tracker v1</td><td>work item · self-contained Fix the board</td></tr>
+</tbody>
+</table></div>
+</section>
+</main>
+</body>
+</html>

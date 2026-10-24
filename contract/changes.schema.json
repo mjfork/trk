@@ -1,0 +1,769 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/changes.schema.json",
+  "title": "trk changes --json",
+  "description": "The response of `trk changes --since <seq> [--root <id>] [--limit N] --json`: the herdr contract's change feed (ADR 0002; spec 01, Change feed). Consumers ignore change kinds they don't know; adding fields never bumps `schema`, removing one or changing its meaning does. So unknown change kinds and additional fields are allowed everywhere.",
+  "type": "object",
+  "required": ["schema", "epoch", "head", "next", "changes"],
+  "properties": {
+    "schema": {"const": 1},
+    "epoch": {"type": "string", "minLength": 1, "description": "An opaque id for the journal the seqs belong to. `trk restore` rotates it, because a restore rewinds the journal and its seqs get reused. A consumer keeps (epoch, seq) as its cursor: a changed epoch, or a head below the cursor, means rebuild from --since 0."},
+    "head": {"$ref": "#/$defs/cursor", "description": "The store's latest seq (0 for an empty journal)."},
+    "next": {"$ref": "#/$defs/cursor", "description": "The cursor for the following --since: the seq of the last row scanned (counting rows --root filtered out), or head when the scan reached the end."},
+    "changes": {"type": "array", "items": {"$ref": "#/$defs/row"}, "description": "Rows in ascending seq."}
+  },
+  "$defs": {
+    "cursor": {"type": "integer", "minimum": 0},
+    "id": {"type": "string", "minLength": 1},
+    "nullable_id": {"type": ["string", "null"], "minLength": 1},
+    "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
+    "status": {"enum": ["open", "closed"]},
+    "resolution": {"enum": ["done", "wont-do", "superseded", "out-of-scope", "duplicate"]},
+    "spec_state": {"enum": ["draft", "accepted"]},
+    "actor_kind": {"enum": ["human", "agent"]},
+    "role": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "A function role, or parent (relative)."},
+    "excerpt": {"type": "string", "maxLength": 240, "not": {"pattern": "[\\r\\n\\t]|  "}, "description": "A section as plain text: markdown markers dropped, whitespace collapsed, cut to 240 characters including a trailing …."},
+    "outcome": {"type": "string", "minLength": 1, "maxLength": 300, "not": {"pattern": "[\\r\\n]"}, "description": "One line, at most 300 chars."},
+    "ask_opened_data": {
+      "description": "ask.opened data, which ask.reopened repeats: item.created's keys at an ask's fixed values plus the ask's.",
+      "required": ["subtype", "rank", "urgent", "jira_url", "repos", "sections", "owner", "addressee_role", "addressee_kind", "question", "asker"],
+      "properties": {
+        "subtype": {"type": "null"},
+        "rank": {"type": "string", "minLength": 1},
+        "urgent": {"type": "boolean"},
+        "jira_url": {"type": "null"},
+        "repos": {"type": "array", "maxItems": 0},
+        "sections": {"type": "array", "items": {"type": "string"}, "contains": {"const": "question"}, "description": "Section handles; the question is required."},
+        "owner": {"type": "null", "description": "An ask never has its own owner."},
+        "addressee_role": {"$ref": "#/$defs/role"},
+        "addressee_kind": {"$ref": "#/$defs/actor_kind"},
+        "question": {"$ref": "#/$defs/excerpt"},
+        "asker": {"$ref": "#/$defs/id"},
+        "ledger": {"anyOf": [{"$ref": "#/$defs/ledger_handle"}, {"type": "null"}], "description": "The ledger row of the parent ticket the ask is tied to (`ask --ledger`); null when none; absent on rows written before Stage gates' ledger."}
+      }
+    },
+    "ask_closing_data": {
+      "description": "The keys ask.answered and ask.withdrawn share (spec 02, Feed rows).",
+      "required": ["resolution", "outcome", "addressee_role", "owner_kind", "parent_claim_session", "parent_claim_live"],
+      "properties": {
+        "outcome": {"$ref": "#/$defs/outcome"},
+        "addressee_role": {"$ref": "#/$defs/role"},
+        "owner_kind": {"enum": ["human", "agent", null], "description": "The wake owner's kind; null when the owner is null."},
+        "parent_claim_session": {"$ref": "#/$defs/nullable_id", "description": "The session of the parent's most recent claim, live or lapsed; null if it was never claimed."},
+        "parent_claim_live": {"type": "boolean", "description": "Whether that claim is live as the row commits."}
+      }
+    },
+    "stage": {"enum": ["framed", "specd", "built", "merged", "verified"]},
+    "criterion_handle": {"type": "string", "pattern": "^ac-[1-9][0-9]*$"},
+    "gate": {"enum": ["framed", "specd", "built", "merged", "verified", "accept", "close"]},
+    "evidence_id": {"type": "string", "pattern": "^[0-9a-hjkmnp-tv-z]{6}$", "description": "6 chars of Core's lowercase Crockford alphabet."},
+    "ledger_handle": {"type": "string", "pattern": "^ledger-[1-9][0-9]*$"},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{7,40}$", "description": "Lowercase, as stored."},
+    "ledger_row": {
+      "description": "The keys every ledger.* row carries: the row's handle, number and kind. Ledger rows belong to tickets only.",
+      "properties": {
+        "item": {"$ref": "#/$defs/id"},
+        "form": {"enum": ["spec-bound", "self-contained"]},
+        "data": {
+          "required": ["ledger", "n", "kind"],
+          "properties": {
+            "ledger": {"$ref": "#/$defs/ledger_handle"},
+            "n": {"type": "integer", "minimum": 1},
+            "kind": {"enum": ["fork", "contradiction", "reward-hack"]}
+          }
+        }
+      }
+    },
+    "criterion_item": {
+      "description": "Criteria belong to tickets, projects and programs (destination statements), never to decisions or asks.",
+      "properties": {"item": {"$ref": "#/$defs/id"}, "form": {"enum": ["spec-bound", "self-contained", null]}}
+    },
+    "position": {
+      "description": "Where an item sits: its parent (null when top-level), root, depth and rank.",
+      "type": "object",
+      "required": ["parent", "root", "depth", "rank"],
+      "properties": {
+        "parent": {"$ref": "#/$defs/nullable_id"},
+        "root": {"$ref": "#/$defs/id"},
+        "depth": {"type": "integer", "minimum": 0},
+        "rank": {"type": "string", "minLength": 1}
+      }
+    },
+    "row": {
+      "description": "One journal row. Item fields (kind, form, title, parent, root, depth, owner, client) describe the item after the change; owner and client are its effective ones.",
+      "type": "object",
+      "required": ["seq", "at", "change", "item", "kind", "form", "title", "parent", "root", "depth", "actor", "session", "owner", "status_old", "status_new", "data", "addressee"],
+      "properties": {
+        "seq": {"type": "integer", "minimum": 1},
+        "at": {"$ref": "#/$defs/timestamp"},
+        "change": {"type": "string", "pattern": "^[a-z]+(\\.[a-z_-]+)+$"},
+        "item": {"$ref": "#/$defs/nullable_id"},
+        "kind": {"enum": ["program", "project", "work-item", null]},
+        "form": {"enum": ["spec-bound", "self-contained", "decision", "ask", null]},
+        "title": {"type": ["string", "null"]},
+        "parent": {"$ref": "#/$defs/nullable_id"},
+        "root": {"$ref": "#/$defs/nullable_id"},
+        "depth": {"type": ["integer", "null"], "minimum": 0},
+        "actor": {"$ref": "#/$defs/id", "description": "Who ran the command; on an implicit claim.expired, the claimant."},
+        "session": {"$ref": "#/$defs/nullable_id", "description": "The writer's session; on claim.* rows, the claim's session."},
+        "owner": {"$ref": "#/$defs/nullable_id"},
+        "client": {"anyOf": [{"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"}, {"type": "null"}], "description": "The item's effective client after the change (tr-fz0az); null when it has none, on a row with no item and on every row written before the field existed. Not required: older builds' rows lack it."},
+        "status_old": {"anyOf": [{"$ref": "#/$defs/status"}, {"type": "null"}]},
+        "status_new": {"anyOf": [{"$ref": "#/$defs/status"}, {"type": "null"}]},
+        "data": {"type": "object"},
+        "addressee": {"$ref": "#/$defs/nullable_id", "description": "On ask.* rows and comment.routed, the actor the ask's role resolved to when the row was written; null on every other row (replayed schema-1 rows included)."}
+      },
+      "allOf": [
+        {"$ref": "#/$defs/item_fields"},
+        {"$ref": "#/$defs/status_fields"},
+        {"$ref": "#/$defs/addressee_field"},
+        {"$ref": "#/$defs/kinds"}
+      ]
+    },
+    "addressee_field": {
+      "description": "addressee is set on ask.* rows and on comment.routed (the owner it is routed to); null on every other row.",
+      "if": {"properties": {"change": {"pattern": "^(ask\\.|comment\\.routed$)"}}, "required": ["change"]},
+      "then": {"properties": {"addressee": {"$ref": "#/$defs/id"}}},
+      "else": {"properties": {"addressee": {"type": "null"}}}
+    },
+    "item_fields": {
+      "description": "A row without an item (actor.*, role.set, config.changed) has every item field null; a row with one has kind, title, root and depth. form is set exactly on work items; parent is null exactly at depth 0.",
+      "if": {"properties": {"item": {"type": "null"}}},
+      "then": {
+        "properties": {
+          "kind": {"type": "null"}, "form": {"type": "null"}, "title": {"type": "null"}, "parent": {"type": "null"},
+          "root": {"type": "null"}, "depth": {"type": "null"}, "owner": {"type": "null"}, "client": {"type": "null"}
+        }
+      },
+      "else": {
+        "properties": {
+          "kind": {"type": "string"}, "title": {"type": "string"}, "root": {"type": "string"}, "depth": {"type": "integer"}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"kind": {"const": "work-item"}}},
+            "then": {"properties": {"form": {"type": "string"}}},
+            "else": {"properties": {"form": {"type": "null"}}}
+          },
+          {
+            "if": {"properties": {"depth": {"const": 0}}},
+            "then": {"properties": {"parent": {"type": "null"}}},
+            "else": {"properties": {"parent": {"type": "string"}}}
+          }
+        ]
+      }
+    },
+    "status_fields": {
+      "description": "On the kinds Core writes, status_old and status_new are null except on item.created and ask.opened (null -> open), item.closed, ask.answered and ask.withdrawn (open -> closed), and item.reopened and ask.reopened (closed -> open); ask.readdressed and ask.replied carry none. Unknown kinds are not constrained.",
+      "if": {"properties": {"change": {"enum": ["ask.readdressed", "ask.replied", "comment.routed", "comment.acknowledged", "item.updated", "item.moved", "owner.changed", "claim.taken", "claim.renewed", "claim.released", "claim.expired", "spec.changed", "edge.added", "edge.removed", "actor.added", "actor.updated", "role.set", "config.changed", "handoff.added", "page.created", "stage.changed", "criterion.added", "criterion.edited", "criterion.retired", "evidence.added", "ledger.added", "ledger.verdict", "ledger.settled", "ledger.promoted"]}}, "required": ["change"]},
+      "then": {"properties": {"status_old": {"type": "null"}, "status_new": {"type": "null"}}}
+    },
+    "kinds": {
+      "description": "The change kinds Core, Asks and owners, Handoffs and Stage gates write, with their data: every kind the CLI writes today, ask.reopened included (Page publisher's amendments). Any other kind (one added later) is checked only against the base row.",
+      "allOf": [
+        {
+          "if": {"properties": {"change": {"const": "item.created"}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "status_old": {"type": "null"},
+              "status_new": {"const": "open"},
+              "data": {
+                "required": ["subtype", "rank", "urgent", "jira_url", "repos", "sections"],
+                "properties": {
+                  "subtype": {"enum": ["research", "prototype", "grilling", "task", null]},
+                  "rank": {"type": "string", "minLength": 1},
+                  "urgent": {"type": "boolean"},
+                  "jira_url": {"type": ["string", "null"]},
+                  "repos": {"type": "array", "items": {"type": "string"}},
+                  "sections": {"type": "array", "items": {"type": "string"}, "description": "Section handles."},
+                  "owner": {"$ref": "#/$defs/nullable_id", "description": "The item's own owner (null when it inherits); the row's owner is the effective one."},
+                  "stage": {"anyOf": [{"$ref": "#/$defs/stage"}, {"type": "null"}], "description": "The stage a ticket is born at (null off tickets); absent on rows written before Stage gates."},
+                  "criteria": {"type": "array", "items": {"$ref": "#/$defs/criterion_handle"}, "description": "Handles of the criteria given at creation, each with its own criterion.added row; absent before Stage gates."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ask.opened"}}},
+          "then": {
+            "description": "Opening an ask (spec 02, Feed rows): instead of item.created, with item.created's keys at an ask's fixed values plus the ask's. owner is the parent's effective owner (the wake owner); addressee is the resolved actor.",
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "kind": {"const": "work-item"},
+              "form": {"const": "ask"},
+              "status_old": {"type": "null"},
+              "status_new": {"const": "open"},
+              "data": {"$ref": "#/$defs/ask_opened_data"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ask.readdressed"}}},
+          "then": {
+            "description": "An open ask's resolved addressee or role changed (spec 02, Readdressing): explicitly by `trk readdress` (cause readdress; always a new role), or implicitly after the row that changed what it resolves to (role-set, owner-changed, moved; always a new actor). addressee is the new actor; owner is the wake owner.",
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "kind": {"const": "work-item"},
+              "form": {"const": "ask"},
+              "data": {
+                "required": ["old_addressee", "old_role", "addressee_role", "addressee_kind", "cause", "self_addressed"],
+                "properties": {
+                  "old_addressee": {"$ref": "#/$defs/id", "description": "The actor the ask resolved to before."},
+                  "old_role": {"$ref": "#/$defs/role"},
+                  "addressee_role": {"$ref": "#/$defs/role"},
+                  "addressee_kind": {"$ref": "#/$defs/actor_kind"},
+                  "cause": {"enum": ["readdress", "role-set", "owner-changed", "moved"]},
+                  "self_addressed": {"type": "boolean", "description": "The new addressee is the asker; only an implicit readdress can do this."}
+                },
+                "allOf": [
+                  {"if": {"properties": {"cause": {"const": "readdress"}}, "required": ["cause"]},
+                   "then": {"properties": {"self_addressed": {"const": false}}}}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ask.answered"}}},
+          "then": {
+            "description": "Answering an ask (spec 02, Answering): instead of item.closed. addressee is the resolved actor; actor is the answerer, a proxy when they differ. via says where the answer came from (spec 04, Amendments to Asks and owners): `evidence` is a human-review pass answering a ticket's RED-read ask, always a proxy (spec 03, Amendments to Asks and owners).",
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "kind": {"const": "work-item"},
+              "form": {"const": "ask"},
+              "status_old": {"const": "open"},
+              "status_new": {"const": "closed"},
+              "data": {
+                "required": ["answer", "proxy", "via"],
+                "properties": {
+                  "resolution": {"const": "done"},
+                  "answer": {"$ref": "#/$defs/excerpt"},
+                  "proxy": {"type": "boolean", "description": "true when the answerer is not the resolved addressee; always true via evidence."},
+                  "via": {"enum": ["cli", "page", "evidence"]},
+                  "slug": {"type": "string", "minLength": 1, "description": "via page: the page the answering comment is on."},
+                  "comment_id": {"type": "string", "minLength": 1, "description": "via page: the answering comment."},
+                  "confirmed_by": {"$ref": "#/$defs/id", "description": "via page, on rows written since tr-3vgrb: who confirmed the reply as the answer (`trk answer --from-comment`); the row's actor is the commenter."},
+                  "evidence": {"$ref": "#/$defs/evidence_id", "description": "via evidence: the human-review evidence id that answered it."}
+                },
+                "allOf": [
+                  {"$ref": "#/$defs/ask_closing_data"},
+                  {"if": {"properties": {"via": {"const": "page"}}, "required": ["via"]},
+                   "then": {"required": ["slug", "comment_id"]}},
+                  {"if": {"properties": {"via": {"const": "evidence"}}, "required": ["via"]},
+                   "then": {"required": ["evidence"], "properties": {"proxy": {"const": true}}}}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ask.withdrawn"}}},
+          "then": {
+            "description": "Withdrawing an ask (spec 02, Withdrawing and other closes): instead of item.closed, by `trk withdraw` (wont-do, the closer's reason), `close --resolution duplicate|superseded` (reason null), or the parent closing (wont-do, reason parent_closed).",
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "kind": {"const": "work-item"},
+              "form": {"const": "ask"},
+              "status_old": {"const": "open"},
+              "status_new": {"const": "closed"},
+              "data": {
+                "allOf": [
+                  {"$ref": "#/$defs/ask_closing_data"},
+                  {"if": {"properties": {"resolution": {"const": "superseded"}}, "required": ["resolution"]}, "then": {"required": ["by"]}},
+                  {"if": {"properties": {"resolution": {"const": "duplicate"}}, "required": ["resolution"]}, "then": {"required": ["of"]}},
+                  {"if": {"properties": {"resolution": {"const": "wont-do"}}, "required": ["resolution"]},
+                   "then": {"properties": {"reason": {"type": "string", "minLength": 1}}},
+                   "else": {"properties": {"reason": {"type": "null"}}}}
+                ],
+                "required": ["reason"],
+                "properties": {
+                  "resolution": {"enum": ["wont-do", "duplicate", "superseded"]},
+                  "by": {"$ref": "#/$defs/id", "description": "The replacement, when superseded."},
+                  "of": {"$ref": "#/$defs/id", "description": "The original, when duplicate."},
+                  "reason": {"type": ["string", "null"], "description": "parent_closed when the parent's close withdrew it, else the closer's reason; null for duplicate and superseded."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ask.replied"}}},
+          "then": {
+            "description": "A person's page comment on an open ask's box (spec 04, Comments as answers): a reply the asker confirms as the answer (`trk answer --from-comment`, then ask.answered) or follows up. The ask stays open. actor is the commenter; addressee is the resolved actor.",
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "kind": {"const": "work-item"},
+              "form": {"const": "ask"},
+              "status_old": {"type": "null"},
+              "status_new": {"type": "null"},
+              "data": {
+                "required": ["slug", "comment_id", "excerpt"],
+                "properties": {
+                  "slug": {"type": "string", "minLength": 1, "description": "The page the comment is on."},
+                  "comment_id": {"type": "string", "minLength": 1},
+                  "excerpt": {"$ref": "#/$defs/excerpt", "description": "The comment's text as plain text."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ask.reopened"}}},
+          "then": {
+            "description": "Reopening an answered ask (spec 04, Amendments to Asks and owners): instead of item.reopened, with ask.opened's fields (the addressee resolved now) plus the reason and who reopened it.",
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "kind": {"const": "work-item"},
+              "form": {"const": "ask"},
+              "status_old": {"const": "closed"},
+              "status_new": {"const": "open"},
+              "data": {
+                "allOf": [{"$ref": "#/$defs/ask_opened_data"}],
+                "required": ["reason", "reopened_by"],
+                "properties": {
+                  "reason": {"$ref": "#/$defs/outcome", "description": "Why the answer did not settle it, in one line."},
+                  "reopened_by": {"$ref": "#/$defs/id"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "item.updated"}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "data": {
+                "required": ["fields", "old", "new"],
+                "properties": {
+                  "fields": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "Names changed; a section is section:<handle> and has no values in old/new."},
+                  "old": {"type": "object"},
+                  "new": {"type": "object"},
+                  "via": {"const": "migration", "description": "Set when the schema 4 upgrade renamed a written criteria section to its -imported handle."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "item.closed"}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "status_old": {"const": "open"},
+              "status_new": {"const": "closed"},
+              "data": {
+                "required": ["resolution", "outcome"],
+                "properties": {
+                  "resolution": {"$ref": "#/$defs/resolution"},
+                  "outcome": {"$ref": "#/$defs/outcome"},
+                  "by": {"$ref": "#/$defs/id", "description": "The replacement, when superseded."},
+                  "of": {"$ref": "#/$defs/id", "description": "The original, when duplicate."}
+                },
+                "allOf": [
+                  {"if": {"properties": {"resolution": {"const": "superseded"}}, "required": ["resolution"]}, "then": {"required": ["by"]}},
+                  {"if": {"properties": {"resolution": {"const": "duplicate"}}, "required": ["resolution"]}, "then": {"required": ["of"]}}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "item.reopened"}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "status_old": {"const": "closed"},
+              "status_new": {"const": "open"},
+              "data": {
+                "required": ["resolution"],
+                "properties": {"resolution": {"$ref": "#/$defs/resolution", "description": "The resolution the item had before it reopened."}}
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "item.moved"}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "data": {
+                "required": ["old", "new"],
+                "properties": {
+                  "old": {"$ref": "#/$defs/position"},
+                  "new": {"$ref": "#/$defs/position"},
+                  "rekey": {"type": "boolean", "description": "true when the move only re-keyed siblings' ranks; consumers may ignore it."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "owner.changed"}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "data": {
+                "required": ["old", "new"],
+                "properties": {
+                  "old": {"$ref": "#/$defs/nullable_id"},
+                  "new": {"$ref": "#/$defs/nullable_id"},
+                  "reason": {"enum": ["moved-top", "migration"], "description": "Absent on an edit; moved-top when move --top stored the prior effective owner; migration when the schema 2 upgrade gave a top-level item the default owner."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"enum": ["claim.taken", "claim.renewed", "claim.released", "claim.expired"]}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "session": {"$ref": "#/$defs/id"},
+              "data": {
+                "required": ["claim_actor", "lease_until"],
+                "properties": {
+                  "claim_actor": {"$ref": "#/$defs/id"},
+                  "lease_until": {"$ref": "#/$defs/timestamp"},
+                  "forced": {"type": "boolean", "description": "On claim.taken: true when claim --force overrode the program rule."},
+                  "reason": {"type": "string", "minLength": 1, "description": "On claim.released, why the claim ended when the spec names one (closed: the item closed); absent on an explicit release. New reasons may appear."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "spec.changed"}}},
+          "then": {
+            "description": "Stage gates: an acceptance names its acceptor (the deciding judgment's actor) and that judgment; a return to draft names its reason. Rows written before Stage gates carry neither.",
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "kind": {"const": "project"},
+              "data": {
+                "required": ["old", "new"],
+                "properties": {
+                  "old": {"$ref": "#/$defs/spec_state"},
+                  "new": {"$ref": "#/$defs/spec_state"},
+                  "acceptor": {"$ref": "#/$defs/id"},
+                  "judgment": {"$ref": "#/$defs/evidence_id"},
+                  "reason": {"type": "string", "minLength": 1}
+                },
+                "dependentRequired": {"acceptor": ["judgment"], "judgment": ["acceptor"]}
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"enum": ["edge.added", "edge.removed"]}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id", "description": "The edge's src."},
+              "data": {
+                "required": ["type", "src", "dst"],
+                "properties": {
+                  "type": {"enum": ["blocks", "relates", "supersedes"]},
+                  "src": {"$ref": "#/$defs/id"},
+                  "dst": {"$ref": "#/$defs/id"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"enum": ["actor.added", "actor.updated"]}}},
+          "then": {
+            "properties": {
+              "item": {"type": "null"},
+              "data": {
+                "required": ["id", "kind", "display"],
+                "properties": {
+                  "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+                  "kind": {"enum": ["human", "agent"]},
+                  "display": {"type": "string"},
+                  "fields": {"type": "array", "minItems": 1, "items": {"enum": ["service_user"]},
+                             "description": "actor.updated by `trk actor link` (spec 04, The commenter): the actor's link to an artifact-service author id changed. The id itself is internal and never in the feed."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "role.set"}}},
+          "then": {
+            "properties": {
+              "item": {"type": "null"},
+              "data": {
+                "required": ["role", "old", "new"],
+                "properties": {
+                  "role": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "not": {"const": "parent"}},
+                  "old": {"$ref": "#/$defs/nullable_id", "description": "The previous holder; null when the role is new."},
+                  "new": {"$ref": "#/$defs/id"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "config.changed"}}},
+          "then": {
+            "properties": {
+              "item": {"type": "null"},
+              "data": {
+                "required": ["key", "old", "new"],
+                "properties": {
+                  "key": {"enum": ["default-owner", "shared-agent", "template-parent", "publish-base-url", "publish-token-file", "publish-team", "publish-token-expires", "publish-home"], "description": "default-owner, shared-agent and template-parent are `trk config set`'s; the publish-* keys are `trk pages setup`'s (Page publisher). The token secret is never a value."},
+                  "old": {"$ref": "#/$defs/nullable_id", "description": "null when init or the schema 2 migration first sets the default owner, when the template parent is first set, or when the first `pages setup` sets a publish-* key; the shared agent starts as worker."},
+                  "new": {"$ref": "#/$defs/id", "description": "An actor; for template-parent and publish-home, an item id; for the other publish-* keys a URL, absolute file path, team slug or YYYY-MM-DD date."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "comment.routed"}}},
+          "then": {
+            "description": "A person's root comment on an item page outside any ask box (spec 04, Comments as answers, tr-yd424): routed to the item's effective owner, who is the addressee. actor is the commenter. On a Needs-you page the row has no item, data.page names the page (`needs-you:<actor>`) and the addressee is the page's person. The thread stays open; `trk show` lists the comment until comment.acknowledged.",
+            "properties": {
+              "status_old": {"type": "null"},
+              "status_new": {"type": "null"},
+              "data": {
+                "required": ["slug", "handle", "comment_id", "excerpt"],
+                "properties": {
+                  "slug": {"type": "string", "minLength": 1, "description": "The page the comment is on."},
+                  "handle": {"type": ["string", "null"], "description": "The handle the comment is anchored on."},
+                  "comment_id": {"type": "string", "minLength": 1},
+                  "excerpt": {"$ref": "#/$defs/excerpt", "description": "The comment's text as plain text."},
+                  "page": {"type": "string", "pattern": "^needs-you:", "description": "Present exactly on a Needs-you page's comment."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "comment.acknowledged"}}},
+          "then": {
+            "description": "`trk comment ack`: a routed comment is taken off `trk show`'s list. actor is who acknowledged it; the item fields are those of the routed row's item (null for a Needs-you comment).",
+            "properties": {
+              "status_old": {"type": "null"},
+              "status_new": {"type": "null"},
+              "data": {
+                "required": ["comment_id"],
+                "properties": {
+                  "comment_id": {"type": "string", "minLength": 1},
+                  "ask": {"$ref": "#/$defs/id", "description": "The ask that took the point on, when it became one."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "page.created"}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id", "description": "The item whose page was first published (never an ask: asks have no page)."},
+              "form": {"not": {"const": "ask"}},
+              "actor": {"const": "publisher"},
+              "data": {
+                "required": ["slug", "url"],
+                "properties": {
+                  "slug": {"type": "string", "minLength": 1},
+                  "url": {"type": "string", "minLength": 1}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "handoff.added"}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id", "description": "The item the handoff is kept with."},
+              "session": {"description": "The session that wrote the handoff, or null."},
+              "data": {
+                "required": ["id", "first_line"],
+                "not": {"required": ["body"], "description": "A handoff's body never travels in the feed; read it with `trk handoff show`."},
+                "properties": {
+                  "id": {"type": "integer", "minimum": 1, "description": "The handoff's id, increasing across the store."},
+                  "first_line": {"type": "string", "minLength": 1, "maxLength": 200, "not": {"pattern": "[\\r\\n]"}, "description": "The body's first non-blank line, stripped, at most 200 chars."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "stage.changed"}}},
+          "then": {
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "kind": {"const": "work-item"},
+              "form": {"enum": ["spec-bound", "self-contained"]},
+              "data": {
+                "required": ["old", "new", "via"],
+                "properties": {
+                  "old": {"anyOf": [{"$ref": "#/$defs/stage"}, {"type": "null"}], "description": "null for the row that gives a ticket its first stage."},
+                  "new": {"$ref": "#/$defs/stage"},
+                  "via": {"enum": ["create", "advance", "skip", "reopen-stage", "spec-accept", "spec-draft", "reopen", "migration"]},
+                  "reason": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "criterion.added"}}},
+          "then": {
+            "$ref": "#/$defs/criterion_item",
+            "properties": {
+              "data": {
+                "required": ["handle", "text", "version", "rank"],
+                "properties": {
+                  "handle": {"$ref": "#/$defs/criterion_handle"},
+                  "text": {"$ref": "#/$defs/excerpt"},
+                  "version": {"const": 1},
+                  "rank": {"type": "string", "minLength": 1},
+                  "via": {"const": "migration", "description": "Set when the schema 4 upgrade imported a written criterion."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "criterion.edited"}}},
+          "then": {
+            "$ref": "#/$defs/criterion_item",
+            "properties": {
+              "data": {
+                "required": ["handle", "old_version", "version", "text"],
+                "properties": {
+                  "handle": {"$ref": "#/$defs/criterion_handle"},
+                  "old_version": {"type": "integer", "minimum": 1},
+                  "version": {"type": "integer", "minimum": 2},
+                  "text": {"$ref": "#/$defs/excerpt"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "evidence.added"}}},
+          "then": {
+            "description": "One row per evidence row, a retraction included (kind retract, ref the id it withdraws). Asks take no evidence.",
+            "properties": {
+              "item": {"$ref": "#/$defs/id"},
+              "form": {"enum": ["spec-bound", "self-contained", "decision", null]},
+              "data": {
+                "required": ["id", "gate", "kind", "criterion", "criterion_version", "sha", "verdict", "ref", "note"],
+                "properties": {
+                  "id": {"$ref": "#/$defs/evidence_id"},
+                  "gate": {"$ref": "#/$defs/gate"},
+                  "kind": {"enum": ["judgment", "pr", "test-run", "webtester-run", "human-accept", "merge", "review", "skip", "plan", "doc", "retract", "blast-radius", "human-review", "audit"]},
+                  "criterion": {"anyOf": [{"$ref": "#/$defs/criterion_handle"}, {"type": "null"}]},
+                  "criterion_version": {"type": ["integer", "null"], "minimum": 1, "description": "The criterion's version when the row was recorded; null with no criterion."},
+                  "sha": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,40}$", "description": "Lowercase, as stored."},
+                  "verdict": {"enum": ["pass", "fail", null]},
+                  "ref": {"type": ["string", "null"], "minLength": 1},
+                  "note": {"$ref": "#/$defs/excerpt"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "criterion.retired"}}},
+          "then": {
+            "$ref": "#/$defs/criterion_item",
+            "properties": {
+              "data": {
+                "required": ["handle", "reason"],
+                "properties": {
+                  "handle": {"$ref": "#/$defs/criterion_handle"},
+                  "reason": {"$ref": "#/$defs/excerpt"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ledger.added"}}},
+          "then": {
+            "description": "One ledger row logged: by the builder while building, or by an auditor. Its text fields are excerpts.",
+            "$ref": "#/$defs/ledger_row",
+            "properties": {
+              "data": {
+                "required": ["decided", "alternatives", "why", "would_have_asked", "conflicts_with", "files", "origin", "noise", "repeat_of", "topic", "refers_to", "sha"],
+                "properties": {
+                  "decided": {"$ref": "#/$defs/excerpt"},
+                  "alternatives": {"type": "array", "items": {"$ref": "#/$defs/excerpt"}, "description": "At least one on a fork."},
+                  "why": {"$ref": "#/$defs/excerpt"},
+                  "would_have_asked": {"anyOf": [{"$ref": "#/$defs/excerpt"}, {"type": "null"}]},
+                  "conflicts_with": {"type": ["string", "null"], "minLength": 1, "description": "A contradiction's ADR path or spec:<section>; null on other kinds."},
+                  "files": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                  "origin": {"enum": ["builder", "auditor"]},
+                  "noise": {"type": "boolean"},
+                  "repeat_of": {"type": ["string", "null"], "pattern": "^.+:[1-9][0-9]*$", "description": "<ticket>:<n>, an auditor's mark of a guess repeated from another ledger."},
+                  "topic": {"type": ["string", "null"], "minLength": 1},
+                  "refers_to": {"anyOf": [{"$ref": "#/$defs/ledger_handle"}, {"type": "null"}], "description": "The earlier row this one corrects."},
+                  "sha": {"anyOf": [{"$ref": "#/$defs/sha"}, {"type": "null"}]}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ledger.verdict"}}},
+          "then": {
+            "description": "An independent session's verdict on one row, at the sha judged (the head sha unless given; null with no head).",
+            "$ref": "#/$defs/ledger_row",
+            "properties": {
+              "data": {
+                "required": ["verdict", "note", "sha"],
+                "properties": {
+                  "verdict": {"enum": ["sound", "risky", "wrong", "confirmed", "refuted"]},
+                  "note": {"$ref": "#/$defs/excerpt"},
+                  "sha": {"anyOf": [{"$ref": "#/$defs/sha"}, {"type": "null"}]}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ledger.settled"}}},
+          "then": {
+            "description": "A settlement of one row: fixed records the fix sha; ask is the answered engineering ask tied to the row when one settles it.",
+            "$ref": "#/$defs/ledger_row",
+            "properties": {
+              "data": {
+                "required": ["settlement", "sha", "ask", "ticket", "adr", "note"],
+                "properties": {
+                  "settlement": {"enum": ["fixed", "deferred", "accepted", "overruled"]},
+                  "sha": {"anyOf": [{"$ref": "#/$defs/sha"}, {"type": "null"}]},
+                  "ask": {"$ref": "#/$defs/nullable_id"},
+                  "ticket": {"$ref": "#/$defs/nullable_id", "description": "deferred: the ticket filed for the row."},
+                  "adr": {"type": ["string", "null"], "minLength": 1},
+                  "note": {"anyOf": [{"$ref": "#/$defs/excerpt"}, {"type": "null"}]},
+                  "verdict_seq": {"type": ["integer", "null"], "description": "An auditor's settle of a contradiction with no ask: the seq of the SOUND verdict it relied on; null otherwise. Absent on rows written before tr-w40vn."},
+                  "verdict_sha": {"anyOf": [{"$ref": "#/$defs/sha"}, {"type": "null"}], "description": "The sha of that verdict; null otherwise."}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"change": {"const": "ledger.promoted"}}},
+          "then": {
+            "description": "A person promoted one row to an ADR.",
+            "$ref": "#/$defs/ledger_row",
+            "properties": {
+              "data": {
+                "required": ["adr"],
+                "properties": {"adr": {"type": "string", "minLength": 1}}
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

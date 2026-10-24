@@ -1,0 +1,319 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/item.schema.json",
+  "title": "trk item JSON",
+  "description": "The item object shared by `show --json` (as `item`), `ready --json` (as `items[]`) and the other item reads (`tree`, `claim`, `new`, `edit`, section writes): the herdr contract's item shape (ADR 0002). Adding fields never bumps `schema`; removing one or changing its meaning does. So additional fields are allowed everywhere (Page publisher adds `page`, for one). The enums (kind, form, subtype, status, resolution, spec_state, edge type) are closed, as in changes.schema.json: a build that adds a value extends both files in the same commit. why_not rules are open.",
+  "type": "object",
+  "required": [
+    "id", "kind", "form", "subtype", "title", "parent", "root", "depth", "rank", "urgent", "owner", "effective_owner",
+    "status", "resolution", "outcome", "spec_state", "jira_url", "repos", "stage", "merged_skipped", "lane", "gate", "sections", "criteria", "ledger_rows", "edges", "children", "open_asks", "blocked",
+    "in_progress", "claim", "handoff", "page", "ready", "why_not", "created_at", "updated_at", "closed_at"
+  ],
+  "properties": {
+    "id": {"$ref": "#/$defs/id"},
+    "kind": {"$ref": "#/$defs/kind"},
+    "form": {"anyOf": [{"$ref": "#/$defs/form"}, {"type": "null"}], "description": "Set exactly on work items."},
+    "subtype": {"enum": ["research", "prototype", "grilling", "task", null]},
+    "title": {"type": "string"},
+    "parent": {"$ref": "#/$defs/nullable_id", "description": "null exactly at depth 0."},
+    "root": {"$ref": "#/$defs/id", "description": "The depth-0 ancestor; the item itself when top-level."},
+    "depth": {"type": "integer", "minimum": 0},
+    "rank": {"type": "string", "minLength": 1, "description": "Orders siblings; compare as plain strings."},
+    "urgent": {"type": "boolean"},
+    "owner": {"$ref": "#/$defs/nullable_id", "description": "The item's own owner; null when it inherits."},
+    "effective_owner": {"$ref": "#/$defs/nullable_id", "description": "Its own owner, else the nearest ancestor's."},
+    "client": {"anyOf": [{"$ref": "#/$defs/client"}, {"type": "null"}], "description": "The item's own client name; null when it inherits. Added by tr-fz0az, so not required: a reply from an older build has neither client field."},
+    "effective_client": {"anyOf": [{"$ref": "#/$defs/client"}, {"type": "null"}], "description": "Its own client, else the nearest ancestor's."},
+    "status": {"$ref": "#/$defs/status"},
+    "resolution": {"enum": ["done", "wont-do", "superseded", "out-of-scope", "duplicate", null], "description": "Set exactly when closed."},
+    "outcome": {"type": ["string", "null"], "description": "The one-line outcome given at close; null while open."},
+    "spec_state": {"enum": ["draft", "accepted", null], "description": "Set exactly on projects."},
+    "jira_url": {"type": ["string", "null"]},
+    "repos": {"type": "array", "items": {"type": "string"}},
+    "worktree": {"anyOf": [{"$ref": "#/$defs/worktree"}, {"type": "null"}], "description": "The item's recorded worktree (`trk worktree set`, `trk claim --worktree`), or null when it records none. Added by tr-zwb4a, so not required: a reply from an older build has none of worktree, archive and effective_archive."},
+    "archive": {"type": ["string", "null"], "minLength": 1, "description": "The item's own archive location: a path template, as written, in which `<tree>` stands for the worktree's directory name; null when it inherits. trk never expands `~` nor fills `<tree>`."},
+    "effective_archive": {"type": ["string", "null"], "minLength": 1, "description": "Its own archive location, else the nearest ancestor's; null when nothing sets one. The documented default for null is ~/work/archive/<tree>-tmp.tgz; trk reports null and does not invent it."},
+    "stage": {"enum": ["framed", "specd", "built", "merged", "verified", null], "description": "Set on spec-bound and self-contained tickets (null on a ticket closed before Stage gates); null on every other item."},
+    "merged_skipped": {"type": "boolean", "description": "True on a ticket whose Merged gate was met by a skip row; false otherwise."},
+    "lane": {"enum": ["red", "yellow", "green", null], "description": "A ticket's blast-radius lane from its latest counting blast-radius row; null until there is one, and on every other item."},
+    "gate": {
+      "type": "object",
+      "required": ["next", "missing"],
+      "description": "The gate the item faces next and what it still lacks, from the same check advance, spec accept and close refuse on.",
+      "properties": {
+        "next": {"enum": ["specd", "built", "merged", "verified", "accept", "close", null], "description": "A ticket's next stage, accept for a draft project, close for an accepted project, a program or a decision; null on closed items and asks."},
+        "missing": {
+          "type": "array",
+          "description": "Empty when the gate holds. Each entry names a need and its details; the need values are open.",
+          "items": {"type": "object", "required": ["need"], "properties": {"need": {"type": "string", "minLength": 1}}}
+        }
+      }
+    },
+    "sections": {
+      "type": "array",
+      "description": "The expected handles for the item's kind and form (missing ones present: false), then extras in creation order.",
+      "items": {
+        "type": "object",
+        "required": ["handle", "expected", "present"],
+        "properties": {
+          "handle": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+          "expected": {"type": "boolean"},
+          "present": {"type": "boolean"},
+          "generated": {"const": true, "description": "Present only on a section generated from criterion rows (acceptance-criteria, destination); never written."},
+          "body": {"type": ["string", "null"], "description": "Absent under `show --no-sections`; null when the section is not present."}
+        }
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "description": "Acceptance criteria (tickets, projects) or destination statements (programs) in rank order, retired ones included; empty on items that take none.",
+      "items": {
+        "type": "object",
+        "required": ["handle", "text", "version", "rank", "retired", "retired_reason", "status", "latest"],
+        "properties": {
+          "handle": {"type": "string", "pattern": "^ac-[1-9][0-9]*$"},
+          "text": {"type": "string", "minLength": 1, "maxLength": 500},
+          "version": {"type": "integer", "minimum": 1},
+          "rank": {"type": "string", "minLength": 1},
+          "retired": {"type": "boolean"},
+          "retired_reason": {"type": ["string", "null"]},
+          "status": {"enum": ["pass", "fail", "none"], "description": "From the latest counting evidence row; none until evidence is recorded."},
+          "latest": {"type": ["object", "null"], "description": "That latest counting evidence row, or null."}
+        }
+      }
+    },
+    "ledger_rows": {
+      "type": "array",
+      "description": "A ticket's decision ledger in row order, each row with its latest verdict, settlement and promotion and the asks tied to it (as `trk ledger list --json`); empty on every other item.",
+      "items": {
+        "type": "object",
+        "required": ["handle", "n", "kind", "decided", "alternatives", "why", "would_have_asked", "conflicts_with", "files", "origin", "noise", "repeat_of", "topic", "refers_to", "actor", "session", "sha", "created_at", "verdict", "settlement", "promotion", "asks"],
+        "properties": {
+          "handle": {"type": "string", "pattern": "^ledger-[1-9][0-9]*$"},
+          "n": {"type": "integer", "minimum": 1},
+          "kind": {"enum": ["fork", "contradiction", "reward-hack"]},
+          "alternatives": {"type": "array", "items": {"type": "string"}},
+          "files": {"type": "array", "items": {"type": "string"}},
+          "origin": {"enum": ["builder", "auditor"]},
+          "noise": {"type": "boolean"},
+          "refers_to": {"type": ["integer", "null"], "minimum": 1},
+          "verdict": {
+            "type": ["object", "null"],
+            "required": ["verdict", "note", "sha", "actor", "session", "seq", "created_at"],
+            "properties": {"verdict": {"enum": ["sound", "risky", "wrong", "confirmed", "refuted"]}},
+            "description": "The latest verdict, or null."
+          },
+          "settlement": {
+            "type": ["object", "null"],
+            "required": ["settlement", "sha", "ask", "ticket", "adr", "note", "actor", "session", "seq", "created_at"],
+            "properties": {"settlement": {"enum": ["fixed", "deferred", "accepted", "overruled"]}},
+            "description": "The latest settlement, or null."
+          },
+          "promotion": {"type": ["object", "null"], "required": ["adr", "actor", "session", "seq", "created_at"], "description": "The latest promotion to an ADR, or null."},
+          "asks": {
+            "type": "array",
+            "description": "Asks tied to the row (`ask --ledger`), oldest first, open or closed.",
+            "items": {"type": "object", "required": ["id", "title", "status", "resolution"]}
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "description": "Edges in and out of the item, each with the other end. dir is out when this item is the src, in when it is the dst; relates is out at both ends.",
+      "items": {
+        "type": "object",
+        "required": ["dir", "type", "id", "title", "status"],
+        "properties": {
+          "dir": {"enum": ["in", "out"]},
+          "type": {"enum": ["blocks", "relates", "supersedes"]},
+          "id": {"$ref": "#/$defs/id"},
+          "title": {"type": "string"},
+          "status": {"$ref": "#/$defs/status"}
+        }
+      }
+    },
+    "children": {
+      "type": "array",
+      "description": "Direct children in rank order.",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "form", "title", "status"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "kind": {"$ref": "#/$defs/kind"},
+          "form": {"anyOf": [{"$ref": "#/$defs/form"}, {"type": "null"}]},
+          "title": {"type": "string"},
+          "status": {"$ref": "#/$defs/status"}
+        }
+      }
+    },
+    "open_asks": {
+      "type": "array",
+      "description": "The item's open child asks in rank order, each with its role and the actor it resolves to now.",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "addressee_role", "addressee", "urgent"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "title": {"type": "string"},
+          "addressee_role": {"$ref": "#/$defs/role"},
+          "addressee": {"$ref": "#/$defs/nullable_id"},
+          "urgent": {"type": "boolean"}
+        }
+      }
+    },
+    "addressee_role": {"$ref": "#/$defs/role", "description": "Asks only: the role the ask is addressed to (a function role, or parent)."},
+    "addressee": {"$ref": "#/$defs/nullable_id", "description": "Asks only: the actor the role resolves to now."},
+    "addressee_kind": {"enum": ["human", "agent", null], "description": "Asks only: the addressee's kind."},
+    "asker": {"$ref": "#/$defs/id", "description": "Asks only: the actor that opened it."},
+    "ledger": {"type": ["string", "null"], "pattern": "^ledger-[1-9][0-9]*$", "description": "Asks only: the ledger row of the parent ticket it is tied to (`ask --ledger`), or null."},
+    "comments": {
+      "type": "array",
+      "description": "Work items other than asks: the item's page comments routed to its owner (comment.routed) that nobody has acknowledged (`trk comment ack`), oldest first.",
+      "items": {
+        "type": "object",
+        "required": ["comment", "author", "handle", "at", "body"],
+        "properties": {
+          "comment": {"type": "string", "minLength": 1},
+          "author": {"$ref": "#/$defs/id", "description": "The commenter."},
+          "handle": {"type": ["string", "null"]},
+          "at": {"$ref": "#/$defs/timestamp"},
+          "body": {"type": "string", "description": "The comment's text; the excerpt when the text was not kept."}
+        }
+      }
+    },
+    "replies": {
+      "type": "array",
+      "description": "Asks only: people's page comments on it since its latest opening (ask.replied), oldest first; the last one awaits the asker's confirmation (`trk answer --from-comment`) while the ask is open.",
+      "items": {
+        "type": "object",
+        "required": ["comment", "actor", "at", "excerpt"],
+        "properties": {
+          "comment": {"type": "string", "minLength": 1},
+          "actor": {"$ref": "#/$defs/id", "description": "The commenter."},
+          "at": {"$ref": "#/$defs/timestamp", "description": "When the reply was recorded."},
+          "excerpt": {"type": "string"}
+        }
+      }
+    },
+    "blocked": {"type": "boolean", "description": "An open blocker or an open child ask."},
+    "in_progress": {"type": "boolean", "description": "A live claim; true exactly when claim is set."},
+    "claim": {"anyOf": [{"$ref": "#/$defs/claim"}, {"type": "null"}], "description": "The live claim, or null."},
+    "handoff": {"anyOf": [{"$ref": "#/$defs/handoff"}, {"type": "null"}], "description": "The latest handoff without its body (`trk handoff show` prints the body), or null when the item has none."},
+    "page": {"anyOf": [{"$ref": "#/$defs/page"}, {"type": "null"}], "description": "The item's published page (Page publisher, Amendments to Core); null before its first publish, and always on asks."},
+    "ready": {"type": "boolean", "description": "true exactly when why_not is empty."},
+    "why_not": {
+      "type": "array",
+      "description": "Every rule keeping the item off the frontier, baseline first: closed, claimed, blocked-by:<id>, open-ask:<id>, kind-never, spec-not-draft, no-project, spec-not-accepted. Later builds may add rules.",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "created_at": {"$ref": "#/$defs/timestamp"},
+    "updated_at": {"$ref": "#/$defs/timestamp"},
+    "closed_at": {"anyOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}], "description": "Set exactly when closed."}
+  },
+  "allOf": [
+    {
+      "description": "An ask carries addressee_role, addressee, addressee_kind, asker, ledger and replies; other items carry none of them.",
+      "if": {"properties": {"form": {"const": "ask"}}, "required": ["form"]},
+      "then": {"required": ["addressee_role", "addressee", "addressee_kind", "asker", "ledger", "replies"]},
+      "else": {"not": {"anyOf": [{"required": ["addressee_role"]}, {"required": ["addressee"]}, {"required": ["addressee_kind"]}, {"required": ["asker"]}, {"required": ["ledger"]}, {"required": ["replies"]}]}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "work-item"}}},
+      "then": {"properties": {"form": {"$ref": "#/$defs/form"}}},
+      "else": {"properties": {"form": {"type": "null"}}}
+    },
+    {
+      "description": "Only tickets have ledger rows.",
+      "if": {"properties": {"form": {"enum": ["spec-bound", "self-contained"]}}, "required": ["form"]},
+      "else": {"properties": {"ledger_rows": {"maxItems": 0}}}
+    },
+    {
+      "description": "Only tickets have a stage.",
+      "if": {"properties": {"form": {"enum": ["spec-bound", "self-contained"]}}, "required": ["form"]},
+      "else": {"properties": {"stage": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"kind": {"const": "project"}}},
+      "then": {"properties": {"spec_state": {"type": "string"}}},
+      "else": {"properties": {"spec_state": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"depth": {"const": 0}}},
+      "then": {"properties": {"parent": {"type": "null"}}},
+      "else": {"properties": {"parent": {"type": "string"}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "closed"}}},
+      "then": {"properties": {"resolution": {"type": "string"}, "outcome": {"type": "string"}, "closed_at": {"type": "string"}}},
+      "else": {"properties": {"resolution": {"type": "null"}, "outcome": {"type": "null"}, "closed_at": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"in_progress": {"const": true}}},
+      "then": {"properties": {"claim": {"type": "object"}}},
+      "else": {"properties": {"claim": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"ready": {"const": true}}},
+      "then": {"properties": {"why_not": {"maxItems": 0}}},
+      "else": {"properties": {"why_not": {"minItems": 1}}}
+    }
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "nullable_id": {"type": ["string", "null"], "minLength": 1},
+    "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
+    "kind": {"enum": ["program", "project", "work-item"]},
+    "form": {"enum": ["spec-bound", "self-contained", "decision", "ask"]},
+    "status": {"enum": ["open", "closed"]},
+    "role": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "client": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "A client name: lowercase letters, digits and `-`, as an actor name. trk stores it; what a client means is the consumer's."},
+    "worktree": {
+      "description": "A recorded worktree: its directory (realpath), the branch checked out when recorded (null when detached or not git), the main checkout it belongs to (null when not git), and the Claude session that recorded it (null when the writer gave none).",
+      "type": "object",
+      "required": ["path", "branch", "repo", "session"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^/"},
+        "branch": {"type": ["string", "null"], "minLength": 1},
+        "repo": {"type": ["string", "null"], "pattern": "^/"},
+        "session": {"type": ["string", "null"], "minLength": 1}
+      }
+    },
+    "claim": {
+      "description": "A live claim: the Claude session holding it, the claimant, and its lease.",
+      "type": "object",
+      "required": ["session", "actor", "lease_until", "taken_at"],
+      "properties": {
+        "session": {"$ref": "#/$defs/id"},
+        "actor": {"$ref": "#/$defs/id"},
+        "lease_until": {"$ref": "#/$defs/timestamp"},
+        "taken_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "page": {
+      "description": "An item's artifact page: its url, the version last published and when, and whether it waits to be sent (marked, or a publish that may not have finished).",
+      "type": "object",
+      "required": ["url", "version", "published_at", "dirty"],
+      "properties": {
+        "url": {"type": "string", "minLength": 1},
+        "version": {"type": "integer", "minimum": 1},
+        "published_at": {"$ref": "#/$defs/timestamp"},
+        "dirty": {"type": "boolean"}
+      }
+    },
+    "handoff": {
+      "description": "A checkpoint record kept with the item (spec 01, Handoffs): who wrote it, when, from which session, and its first line. The body never travels here.",
+      "type": "object",
+      "required": ["id", "at", "actor", "session", "first_line"],
+      "not": {"required": ["body"]},
+      "properties": {
+        "id": {"type": "integer", "minimum": 1},
+        "at": {"$ref": "#/$defs/timestamp"},
+        "actor": {"$ref": "#/$defs/id"},
+        "session": {"$ref": "#/$defs/nullable_id"},
+        "first_line": {"type": "string", "minLength": 1, "maxLength": 200, "not": {"pattern": "[\\r\\n]"}}
+      }
+    }
+  }
+}

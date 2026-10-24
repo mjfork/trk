@@ -1,0 +1,26 @@
+[project]
+name = "trk"
+version = "0.1.0"
+description = "Agent-first issue tracker: one machine-wide SQLite store behind a small CLI"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+trk = "trk.cli:main"
+
+[dependency-groups]
+dev = [
+    "jsonschema>=4.26.0",
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trk"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["feed_unchecked: skip the suite-wide check that every journal row is contract-valid"]

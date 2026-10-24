@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/version.schema.json",
+  "title": "trk --version --json",
+  "description": "The response of `trk --version --json`: the package version, the git commit of the source tree the running trk imports from (null when git is unavailable or the tree is not a checkout), whether that tree is the installed trk, and the store schema version this build speaks. It opens no store. Additional fields are allowed.",
+  "type": "object",
+  "required": ["schema", "version", "commit", "installed", "store_schema"],
+  "properties": {
+    "schema": {"const": 1},
+    "version": {"type": ["string", "null"]},
+    "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"},
+    "installed": {"type": "boolean"},
+    "store_schema": {"type": "integer", "minimum": 1}
+  }
+}

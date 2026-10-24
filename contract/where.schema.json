@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/where.schema.json",
+  "title": "trk where --json",
+  "description": "The response of `trk where <path> --json` (tr-zwb4a): the innermost recorded worktree holding the path (the tree's root path included) and every item that records it, newest recording first. A path in no recorded tree exits 1 with rule `not-found`; its error carries `path` and `worktree`, the git work tree holding the path (null when none), so a cleanup sees that the tree is unrecorded. Closed items are listed too, with their status. Additional fields are allowed.",
+  "type": "object",
+  "required": ["schema", "path", "tree", "items"],
+  "properties": {
+    "schema": {"const": 1},
+    "path": {"type": "string", "pattern": "^/", "description": "The path asked about, resolved with realpath."},
+    "tree": {"type": "string", "pattern": "^/", "description": "The recorded worktree path that holds it."},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "kind", "root", "root_title", "effective_owner", "status", "stage", "claim", "branch", "worktree", "archive", "effective_archive", "recorded_at"],
+        "properties": {
+          "id": {"$ref": "item.schema.json#/$defs/id"},
+          "title": {"type": "string"},
+          "kind": {"$ref": "item.schema.json#/$defs/kind"},
+          "root": {"$ref": "item.schema.json#/$defs/id", "description": "The item's depth-0 ancestor (its program); the item itself when top-level."},
+          "root_title": {"type": "string"},
+          "effective_owner": {"$ref": "item.schema.json#/$defs/nullable_id"},
+          "status": {"$ref": "item.schema.json#/$defs/status"},
+          "stage": {"enum": ["framed", "specd", "built", "merged", "verified", null]},
+          "claim": {"anyOf": [{"$ref": "item.schema.json#/$defs/claim"}, {"type": "null"}], "description": "The live claim (session, actor, lease), or null."},
+          "branch": {"type": ["string", "null"], "minLength": 1, "description": "The recorded branch."},
+          "worktree": {"$ref": "item.schema.json#/$defs/worktree"},
+          "archive": {"$ref": "item.schema.json#/properties/archive"},
+          "effective_archive": {"$ref": "item.schema.json#/properties/effective_archive", "description": "Where to archive the tree's tmp/ before removing it (`<tree>` = the tree's directory name); null means the documented default ~/work/archive/<tree>-tmp.tgz. Carried here so a cleanup needs no `trk show` per tree."},
+          "recorded_at": {"$ref": "item.schema.json#/$defs/timestamp", "description": "When the tree was recorded; the list is newest first."}
+        }
+      }
+    }
+  }
+}

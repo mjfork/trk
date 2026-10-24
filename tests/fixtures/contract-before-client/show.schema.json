@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/show.schema.json",
+  "title": "trk show --json",
+  "description": "The response of `trk show <id> [--no-sections] --json`: one item in the shape item.schema.json pins (ADR 0002). Additional fields are allowed.",
+  "type": "object",
+  "required": ["schema", "item"],
+  "properties": {
+    "schema": {"const": 1},
+    "item": {"$ref": "item.schema.json"}
+  }
+}

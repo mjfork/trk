@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/actors.schema.json",
+  "title": "trk actors --json",
+  "description": "The response of `trk actors --json`: every registered actor in registration order (ADR 0002). Ids are never reused. Additional fields are allowed.",
+  "type": "object",
+  "required": ["schema", "actors"],
+  "properties": {
+    "schema": {"const": 1},
+    "actors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "display"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+          "kind": {"enum": ["human", "agent"]},
+          "display": {"type": "string"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Render a page · tr-j3eqh</title>
+<style>:root{--bg:#fbfaf8;--fg:#1c1b19;--muted:#6b6862;--line:#e3e0da;--card:#ffffff;--accent:#2f5bd3;
+--ok:#1f7a45;--warn:#a5600a;--bad:#b42318;--pill:#eef1fb}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#ecebe8;--muted:#a19e98;--line:#2e2d2b;--card:#1c1c1b;
+--accent:#86a6ff;--ok:#5cc98a;--warn:#e2a54a;--bad:#ff7b6e;--pill:#232838}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.board{max-width:980px;margin:0 auto;padding:16px}
+a{color:var(--accent)}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em}
+pre{overflow-x:auto;background:var(--card);border:1px solid var(--line);padding:8px;border-radius:6px}
+h1{font-size:1.5rem;margin:.2rem 0 .5rem}
+h2{font-size:1.1rem;margin:0;display:inline}
+.head{border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:16px}
+.crumbs{color:var(--muted);font-size:.9rem}
+.crumbs span{margin:0 .3rem}
+.pill,.flag,.tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:.8rem;background:var(--pill)}
+.flag.blocked,.flag.urgent{color:var(--bad)}
+.flag.progress{color:var(--warn)}
+.flag.closed{color:var(--muted)}
+.facts{display:flex;flex-wrap:wrap;gap:4px 20px;margin:0}
+.facts div{display:flex;gap:6px}
+.facts dt{color:var(--muted)}
+.facts dd{margin:0}
+.outcome{color:var(--muted)}
+.handoff{font-size:.9rem;color:var(--muted)}
+.tiles{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-width:110px}
+.tile .n,.funnel .n{display:block;font-size:1.3rem;font-weight:600}
+.tile .l,.funnel .l,.pipeline .l{color:var(--muted);font-size:.85rem}
+.funnel,.pipeline{display:flex;flex-wrap:wrap;gap:6px;list-style:none;padding:0;margin:0}
+.funnel li,.pipeline li{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.pipeline li.reached{border-color:var(--ok)}
+.pipeline li.current{border-color:var(--accent);border-width:2px}
+.pipeline li.ahead{opacity:.6}
+.ev{display:block;font-size:.8rem;color:var(--muted)}
+.waiting{margin:0 0 20px}
+.waiting h2{display:block;margin-bottom:8px}
+.waiting .clear{color:var(--ok);font-weight:600;margin:0}
+.ask{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:8px;
+padding:8px 12px;margin:0 0 8px}
+.ask.urgent{border-left-color:var(--bad)}
+.ask .q{margin:0 0 4px}
+.ask .question>:first-child{margin-top:0}
+.ask .reply{margin:0 0 4px;font-size:.9rem}
+.ask .facts{font-size:.88rem}
+.ask .cta{margin:4px 0 0;font-size:.85rem;color:var(--muted)}
+.rollup,.section{margin:0 0 18px}
+summary{cursor:pointer;margin-bottom:6px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600}
+tr.closed{color:var(--muted)}
+tr.retracted td,li.retired{text-decoration:line-through;color:var(--muted)}
+.none{color:var(--muted);margin:4px 0}
+meter{width:70px}
+.criteria li{margin:3px 0}
+.criteria .ev{display:inline}
+.criteria li.ev-pass .ev{color:var(--ok)}
+.criteria li.ev-fail .ev{color:var(--bad)}
+.criteria .h{color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em}
+blockquote{margin:0;padding-left:12px;border-left:3px solid var(--line);color:var(--muted)}</style>
+</head>
+<body>
+<main class="board ticket">
+<header class="head" data-comment-id="header">
+<nav class="crumbs">Tracker v1 <span>›</span> Page publisher</nav>
+<div class="pills"><span class="pill">work item · spec-bound</span> <span class="flag blocked">blocked</span> <span class="flag progress">in progress</span> <span class="flag urgent">urgent</span></div>
+<h1>Render a page</h1>
+<dl class="facts"><div><dt>Owner</dt><dd>Michael Fork</dd></div><div><dt>Claimed by</dt><dd>worker</dd></div><div><dt>JIRA</dt><dd><a href="https://example.atlassian.net/browse/PROJ-1" target="_blank" rel="noopener">https://example.atlassian.net/browse/PROJ-1</a></dd></div><div><dt>Id</dt><dd><code>tr-j3eqh</code></dd></div><div><dt>Updated</dt><dd>2026-10-11 09:09Z</dd></div></dl>
+<p class="handoff" data-comment-id="handoff">Handoff 2026-10-11 09:17Z by worker: Rendered the header. — <code>trk handoff show tr-j3eqh</code></p>
+</header>
+<section class="tiles" data-comment-id="tiles">
+<ol class="pipeline" data-comment-id="stage"><li class="reached" data-comment-id="stage-framed"><span class="l">Framed</span></li><li class="current" data-comment-id="stage-specd"><span class="l">Spec'd</span></li><li class="ahead" data-comment-id="stage-built"><span class="l">Built</span></li><li class="ahead" data-comment-id="stage-merged"><span class="l">Merged</span></li><li class="ahead" data-comment-id="stage-verified"><span class="l">Verified</span></li></ol>
+</section>
+<section class="waiting none" data-comment-id="waiting">
+<h2>Waiting on people</h2>
+<p class="clear">Nothing is waiting on people</p>
+</section>
+<section class="rollup" data-comment-id="children">
+<h2>Children</h2>
+<p class="none">None</p>
+</section>
+<details class="section" data-comment-id="what-to-build" open>
+<summary><h2>What to build</h2></summary>
+<p>Render <strong>one</strong> page.</p>
+</details>
+<details class="section" data-comment-id="acceptance-criteria">
+<summary><h2>Acceptance criteria</h2></summary>
+<ol class="criteria">
+<li class="ev-none" data-comment-id="ac-1"><span class="h">ac-1</span> It renders <span class="v">v1</span> <span class="ev">no evidence</span></li>
+<li class="ev-none" data-comment-id="ac-2"><span class="h">ac-2</span> It is <code>byte-identical</code> <span class="v">v1</span> <span class="ev">no evidence</span></li>
+</ol>
+</details>
+<details class="section" data-comment-id="s-tiles">
+<summary><h2>Tiles</h2></summary>
+<p>A section named like a template handle.</p>
+</details>
+<details class="section" data-comment-id="s-s-extra">
+<summary><h2>S extra</h2></summary>
+<p>Already s-prefixed.</p>
+</details>
+</main>
+</body>
+</html>

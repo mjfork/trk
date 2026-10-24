@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page publisher · tr-9541s</title>
+<style>:root{--bg:#fbfaf8;--fg:#1c1b19;--muted:#6b6862;--line:#e3e0da;--card:#ffffff;--accent:#2f5bd3;
+--ok:#1f7a45;--warn:#a5600a;--bad:#b42318;--pill:#eef1fb}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#ecebe8;--muted:#a19e98;--line:#2e2d2b;--card:#1c1c1b;
+--accent:#86a6ff;--ok:#5cc98a;--warn:#e2a54a;--bad:#ff7b6e;--pill:#232838}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.board{max-width:980px;margin:0 auto;padding:16px}
+a{color:var(--accent)}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em}
+pre{overflow-x:auto;background:var(--card);border:1px solid var(--line);padding:8px;border-radius:6px}
+h1{font-size:1.5rem;margin:.2rem 0 .5rem}
+h2{font-size:1.1rem;margin:0;display:inline}
+.head{border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:16px}
+.crumbs{color:var(--muted);font-size:.9rem}
+.crumbs span{margin:0 .3rem}
+.pill,.flag,.tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:.8rem;background:var(--pill)}
+.flag.blocked,.flag.urgent{color:var(--bad)}
+.flag.progress{color:var(--warn)}
+.flag.closed{color:var(--muted)}
+.facts{display:flex;flex-wrap:wrap;gap:4px 20px;margin:0}
+.facts div{display:flex;gap:6px}
+.facts dt{color:var(--muted)}
+.facts dd{margin:0}
+.outcome{color:var(--muted)}
+.handoff{font-size:.9rem;color:var(--muted)}
+.tiles{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-width:110px}
+.tile .n,.funnel .n{display:block;font-size:1.3rem;font-weight:600}
+.tile .l,.funnel .l,.pipeline .l{color:var(--muted);font-size:.85rem}
+.funnel,.pipeline{display:flex;flex-wrap:wrap;gap:6px;list-style:none;padding:0;margin:0}
+.funnel li,.pipeline li{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.pipeline li.reached{border-color:var(--ok)}
+.pipeline li.current{border-color:var(--accent);border-width:2px}
+.pipeline li.ahead{opacity:.6}
+.ev{display:block;font-size:.8rem;color:var(--muted)}
+.waiting{margin:0 0 20px}
+.waiting h2{display:block;margin-bottom:8px}
+.waiting .clear{color:var(--ok);font-weight:600;margin:0}
+.ask{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:8px;
+padding:8px 12px;margin:0 0 8px}
+.ask.urgent{border-left-color:var(--bad)}
+.ask .q{margin:0 0 4px}
+.ask .question>:first-child{margin-top:0}
+.ask .reply{margin:0 0 4px;font-size:.9rem}
+.ask .facts{font-size:.88rem}
+.ask .cta{margin:4px 0 0;font-size:.85rem;color:var(--muted)}
+.rollup,.section{margin:0 0 18px}
+summary{cursor:pointer;margin-bottom:6px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:600}
+tr.closed{color:var(--muted)}
+tr.retracted td,li.retired{text-decoration:line-through;color:var(--muted)}
+.none{color:var(--muted);margin:4px 0}
+meter{width:70px}
+.criteria li{margin:3px 0}
+.criteria .ev{display:inline}
+.criteria li.ev-pass .ev{color:var(--ok)}
+.criteria li.ev-fail .ev{color:var(--bad)}
+.criteria .h{color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em}
+blockquote{margin:0;padding-left:12px;border-left:3px solid var(--line);color:var(--muted)}</style>
+</head>
+<body>
+<main class="board project">
+<header class="head" data-comment-id="header">
+<nav class="crumbs">Tracker v1</nav>
+<div class="pills"><span class="pill">project</span> <span class="pill">spec accepted</span></div>
+<h1>Page publisher</h1>
+<dl class="facts"><div><dt>Owner</dt><dd>Michael Fork</dd></div><div><dt>Id</dt><dd><code>tr-9541s</code></dd></div><div><dt>Updated</dt><dd>2026-10-11 09:08Z</dd></div></dl>
+</header>
+<section class="tiles" data-comment-id="tiles">
+<ol class="funnel" data-comment-id="stage-funnel"><li><span class="n">1</span><span class="l">Framed</span></li><li><span class="n">1</span><span class="l">Spec'd</span></li><li><span class="n">0</span><span class="l">Built</span></li><li><span class="n">0</span><span class="l">Merged</span></li><li><span class="n">1</span><span class="l">Verified</span></li></ol>
+<div class="tile"><span class="n">1/3</span><span class="l">tickets done</span></div>
+</section>
+<section class="waiting" data-comment-id="waiting">
+<h2>Waiting on people</h2>
+<div class="ask" data-comment-id="ask-tr-fbfyh">
+<p class="q"><strong>Board or list?</strong></p>
+<div class="question"><p>Which one?</p></div>
+<dl class="facts"><div><dt>Waiting on</dt><dd>product (Kim)</dd></div><div><dt>Asked by</dt><dd>worker</dd></div><div><dt>Opened</dt><dd>2026-10-11 09:14Z</dd></div><div><dt>Urgency</dt><dd>score 1.4 · holds up 1 · waiting 12m (cache warm, 48m left, as of 09:26Z)</dd></div><div><dt>On</dt><dd>Which template</dd></div></dl>
+<p class="cta">Answer by commenting on this box</p>
+</div>
+</section>
+<section class="rollup" data-comment-id="tickets">
+<h2>Tickets</h2>
+<div class="scroll"><table>
+<thead><tr><th>Ticket</th><th>Owner</th><th>PR</th><th>Stage</th><th>Open asks</th><th>Status</th></tr></thead>
+<tbody>
+<tr data-comment-id="child-tr-j3eqh"><td>Render a page</td><td>Michael Fork</td><td>—</td><td>Spec'd</td><td>0</td><td><span class="flag blocked">blocked</span> <span class="flag progress">in progress</span> <span class="flag urgent">urgent</span></td></tr>
+<tr data-comment-id="child-tr-b6gd1"><td>Fix the board <span class="tag">self-contained</span></td><td>Michael Fork</td><td>—</td><td>Framed</td><td>0</td><td></td></tr>
+<tr class="closed" data-comment-id="child-tr-ghcak"><td>Old ticket</td><td>Michael Fork</td><td><a href="https://example.test/pull/1" target="_blank" rel="noopener">https://example.test/pull/1</a></td><td>Verified</td><td>0</td><td><span class="flag closed">closed: done</span> <span class="outcome">Shipped before pages.</span></td></tr>
+</tbody>
+</table></div>
+</section>
+<section class="rollup" data-comment-id="other-children">
+<h2>Other children</h2>
+<div class="scroll"><table>
+<thead><tr><th>Item</th><th>Kind</th><th>Owner</th><th>Open asks</th><th>Status</th></tr></thead>
+<tbody>
+<tr data-comment-id="child-tr-jq5nr"><td>Which template</td><td>work item · decision · grilling</td><td>Michael Fork</td><td>1</td><td><span class="flag blocked">blocked</span></td></tr>
+</tbody>
+</table></div>
+</section>
+<details class="section" data-comment-id="problem">
+<summary><h2>Problem</h2></summary>
+<p>Boards drift.</p>
+</details>
+<details class="section" data-comment-id="solution">
+<summary><h2>Solution</h2></summary>
+<p>The solution.</p>
+</details>
+<details class="section" data-comment-id="user-stories">
+<summary><h2>User stories</h2></summary>
+<p>The user-stories.</p>
+</details>
+<details class="section" data-comment-id="implementation-decisions">
+<summary><h2>Implementation decisions</h2></summary>
+<p>The implementation-decisions.</p>
+</details>
+<details class="section" data-comment-id="testing-decisions">
+<summary><h2>Testing decisions</h2></summary>
+<p>The testing-decisions.</p>
+</details>
+<details class="section" data-comment-id="acceptance-criteria" open>
+<summary><h2>Acceptance criteria</h2></summary>
+<ol class="criteria">
+<li class="ev-none" data-comment-id="ac-1"><span class="h">ac-1</span> Pages publish <span class="v">v1</span> <span class="ev">no evidence</span></li>
+</ol>
+</details>
+<details class="section" data-comment-id="out-of-scope">
+<summary><h2>Out of scope</h2></summary>
+<p>Images.</p>
+</details>
+<section class="rollup" data-comment-id="evidence">
+<h2>Evidence</h2>
+<div class="scroll"><table>
+<thead><tr><th>Gate</th><th>Kind</th><th>Criterion</th><th>Result</th><th>Sha</th><th>Actor</th><th>Time</th><th>Note</th></tr></thead>
+<tbody>
+<tr data-comment-id="evidence-gp1xf3"><td>accept</td><td>judgment</td><td>—</td><td>pass</td><td>—</td><td>Michael Fork</td><td>2026-10-11 09:07Z</td><td>The spec is complete.</td></tr>
+</tbody>
+</table></div>
+</section>
+</main>
+</body>
+</html>

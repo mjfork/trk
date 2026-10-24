@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/ready.schema.json",
+  "title": "trk ready --json",
+  "description": "The response of `trk ready [--root <id>] [--owner <actor>] [--limit N] --json`: the frontier, urgent items first, then in tree order, each in the shape item.schema.json pins (ADR 0002). Additional fields are allowed.",
+  "type": "object",
+  "required": ["schema", "items"],
+  "properties": {
+    "schema": {"const": 1},
+    "items": {"type": "array", "items": {"$ref": "item.schema.json", "properties": {"ready": {"const": true}}}}
+  }
+}

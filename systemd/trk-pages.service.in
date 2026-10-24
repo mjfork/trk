@@ -1,0 +1,6 @@
+[Unit]
+Description=trk page publisher: pull comments, then publish due pages
+
+[Service]
+Type=oneshot
+@ENVIRONMENT@ExecStart=@TRK@ pages tick
