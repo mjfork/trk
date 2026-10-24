@@ -1,19 +1,18 @@
-"""Token expiry and the renewal ask (Page publisher spec: Token expiry, the Artifact client's 401, the
-renewal answer in `pages setup`; AC 10's third bullet), against the in-process fake artifact service.
-The real service is never called."""
+"""Token expiry and the renewal ask (Page publisher spec: Token expiry, a backend's 401, the
+renewal answer in `pages setup`; AC 10's third bullet), against the in-process fake page backend.
+No real backend is ever called."""
 
 import json
 
 import pytest
 
-from fake_artifacts import TOKEN
+from fake_backend import TOKEN, FakeBackend
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_setup import EXPIRES, ME, fake, journal, meta, setup_argv, token_file, tree  # noqa: F401 (fixtures)
 from trk import renewal
 
 NEW_TOKEN = "tok_" + "n" * 40
-GRANTS = ("publish_artifact", "update_artifact", "get_artifact", "list_my_artifacts", "list_artifact_comments",
-          "reply_to_artifact_comment", "list_comment_activity")
+GRANTS = FakeBackend.GRANTS
 
 
 def renewal_asks(trk_home):
@@ -65,7 +64,7 @@ def test_a_401_opens_one_renewal_ask_under_the_home_and_holds_every_write(trk, t
     opened = [row for row in journal(trk_home, since) if row["change"] == "ask.opened"]
     assert [(row["item"], row["actor"]) for row in opened] == [(ask["id"], "publisher")]
     assert meta(trk_home, "publish_renewal_ask") == ask["id"]
-    assert fake.tool_calls("publish_artifact") == [] and fake.artifacts == {}
+    assert fake.tool_calls("publish") == [] and fake.artifacts == {}
     assert all(row["dirty"] for row in trk("pages", "--json").json()["pages"])
     assert "401" in page_row(trk_home, live["P"])["last_error"]
 
@@ -96,7 +95,7 @@ def test_a_401_while_an_expiry_ask_is_open_opens_no_second_ask(trk, trk_home, li
     monkeypatch.setenv("TRK_NOW", "2027-09-20T09:00:00Z")
     rejected(fake)
     report = flush(trk)  # the expiry check opens the ask before the first call meets the 401
-    assert report["held"] is True and fake.tool_calls("publish_artifact") == []
+    assert report["held"] is True and fake.tool_calls("publish") == []
     (ask,) = renewal_asks(trk_home)
     assert report["renewal_ask"] == ask["id"]
     assert "HTTP 401" not in question(trk_home, ask["id"])
@@ -217,14 +216,18 @@ def test_the_question_names_the_expiry_the_grants_and_the_setup_command(trk, trk
     text = question(trk_home, ask["id"])
     assert EXPIRES in text
     assert all(f"`{grant}`" in text for grant in GRANTS)
-    assert f"trk pages setup --base-url {fake.base_url} --token-file" in text
+    assert f"trk pages setup --backend fake --base-url {fake.base_url} --token-file" in text
     assert f"--home {live['P']}" in text and "--expires YYYY-MM-DD" in text
     assert ("HTTP 401" in text) == (cause == "401")
     assert TOKEN not in text and NEW_TOKEN not in text
 
 
-def test_the_grants_are_the_specs():
-    assert renewal.GRANTS == GRANTS
+def test_a_backend_without_grants_names_none(trk, trk_home, live, fake, monkeypatch):
+    monkeypatch.setattr(FakeBackend, "GRANTS", ())
+    rejected(fake)
+    flush(trk)
+    (ask,) = renewal_asks(trk_home)
+    assert "ticked for" not in question(trk_home, ask["id"])
 
 
 # ----- AC 4: setup by an actor that may not answer still succeeds, leaves the ask open, says so -------
@@ -267,7 +270,7 @@ def test_a_401_on_an_update_holds_too(trk, trk_home, live, fake):
 
 
 def test_a_401_from_before_a_setup_does_not_hold_the_new_token(trk, trk_home, live, fake, tmp_path, monkeypatch):
-    from trk import artifacts, store
+    from trk import store
 
     rejected(fake)
     flush(trk)
@@ -276,7 +279,7 @@ def test_a_401_from_before_a_setup_does_not_hold_the_new_token(trk, trk_home, li
     monkeypatch.setenv("TRK_HOME", str(trk_home))
     st = store.open_store()
     try:  # a run that began with the old token meets its 401 only now
-        report = renewal.rejected(st, artifacts.Client(fake.base_url, TOKEN))
+        report = renewal.rejected(st, fake({"base_url": fake.base_url}, TOKEN))
     finally:
         st.close()
     assert report == {"held": False, "renewal_ask": None}

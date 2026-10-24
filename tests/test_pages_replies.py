@@ -1,5 +1,5 @@
 """A person's comment on an ask box is a reply; the asker confirms the answer (tr-3vgrb, decided in
-"When should a page comment close an ask?" tr-v69zt). Against the in-process fake artifact service."""
+"When should a page comment close an ask?" tr-v69zt). Against the in-process fake page backend."""
 
 import json
 

@@ -1,6 +1,7 @@
 """The `tracker` token's expiry and the renewal ask (Page publisher spec: Token expiry).
 
-Loaded only by the `pages` verbs. Every flush and every pull checks the token's
+Loaded only by the `pages` verbs, and only for a page backend that takes a token. Every flush and every
+pull checks the token's
 expiry: at 14 days or less before it, or on any 401, the publisher opens one "Mint a new tracker
 token" ask under `publish_home`, addressed to role `publisher`, unless `publish_renewal_ask` names
 one still open. A 401 also holds every page write until setup succeeds: `publish_token_rejected`
@@ -20,9 +21,6 @@ from .store import PUBLISHER
 
 TITLE = "Mint a new tracker token"
 WINDOW = timedelta(days=14)
-# The tools the `tracker` token must be ticked for (spec: Setup, token and privacy).
-GRANTS = ("publish_artifact", "update_artifact", "get_artifact", "list_my_artifacts", "list_artifact_comments",
-          "reply_to_artifact_comment", "list_comment_activity")
 ANSWER_OUTCOME = "Token renewed"
 # Why setup leaves an open renewal ask open.
 EXPIRES_SOON, NO_PERMISSION = "expires-soon", "ask-permission"
@@ -46,9 +44,12 @@ def _today():
     return clock.now().date()
 
 
-def check(st):
+def check(st, client):
     """The check every flush and pull starts with: open the ask if the token is held or expires within
-    the window. Returns {held, renewal_ask, renewal_ask_error?} for the run's report."""
+    the window. Returns {held, renewal_ask, renewal_ask_error?} for the run's report. A backend without a
+    token has nothing to check."""
+    if not client.TOKEN:
+        return {"held": False, "renewal_ask": None}
     is_held = held(st)
     if is_held or expires_soon(st.meta("publish_token_expires"), _today()):
         return {"held": is_held, **ensure_ask(st, token_rejected=is_held)}
@@ -98,15 +99,22 @@ def ensure_ask(st, *, token_rejected):
 
 def question(st, *, token_rejected):
     """The ask's question: why it opened, the expiry date, the grants and the setup command."""
+    from . import pages  # pages imports this module
+
     expires = st.meta("publish_token_expires")
-    why = (f"The artifact service rejected the `tracker` token (HTTP 401). Page writes are held until setup "
+    backend = pages.backend_name(st)
+    why = (f"The page backend rejected the `tracker` token (HTTP 401). Page writes are held until setup "
            f"succeeds with a new token; the pages stay dirty meanwhile. The token was set to expire on {expires}."
            if token_rejected else f"The `tracker` token expires on {expires}.")
-    grants = ", ".join(f"`{grant}`" for grant in GRANTS)
-    command = (f"trk pages setup --base-url {st.meta('publish_base_url')} --token-file {st.meta('publish_token_file')} "
-               f"--expires YYYY-MM-DD --home {st.meta('publish_home')}")
+    try:
+        granted = pages.backend_class(backend).GRANTS
+    except TrkError:
+        granted = ()
+    grants = f" ticked for {', '.join(f'`{grant}`' for grant in granted)}" if granted else ""
+    command = (f"trk pages setup --backend {backend} --base-url {st.meta('publish_base_url')} "
+               f"--token-file {st.meta('publish_token_file')} --expires YYYY-MM-DD --home {st.meta('publish_home')}")
     return (f"{why}\n\n"
-            f"Mint a new `tracker` token (365 days) ticked for {grants}. Write it to the token file "
+            f"Mint a new `tracker` token (365 days){grants}. Write it to the token file "
             f"(mode 0600), then run, with the new token's expiry date:\n\n"
             f"    {command}\n\n"
             f"Setup checks the new token and answers this ask; the next tick catches every page up.\n")
@@ -115,13 +123,14 @@ def question(st, *, token_rejected):
 def on_setup(tx, actor, expires):
     """Inside setup's transaction, after its token check passed: lift the hold (and the failure pause of
     every page the 401 failed) and answer the open
-    renewal ask when the new expiry is outside the window. Returns None when no renewal ask is open,
+    renewal ask when the new expiry is outside the window, or when the new backend takes no token (`expires`
+    None). Returns None when no renewal ask is open,
     else {id, answered[, reason]}; reason EXPIRES_SOON or NO_PERMISSION says why it stays open."""
     conn = tx.conn
     if held(tx.store):
         # A page the 401 failed didn't fail by itself: it is due again at once, not after the failure pause,
         # so the next tick catches every page up.
-        from .artifacts import Unauthorized  # the hot path never loads the client
+        from .publisher import Unauthorized  # the hot path never loads the backends
 
         conn.execute("UPDATE pages SET last_error = NULL, last_error_at = NULL WHERE last_error LIKE ?",
                      (f"%{Unauthorized.SUFFIX}",))
@@ -129,10 +138,11 @@ def on_setup(tx, actor, expires):
     ask_id = _open_ask(conn, tx.store.meta(ASK_KEY))
     if ask_id is None:
         return None
-    if expires_soon(expires, tx.now.date()):
+    if expires is not None and expires_soon(expires, tx.now.date()):
         return {"id": ask_id, "answered": False, "reason": EXPIRES_SOON}
     try:  # the permission check comes before anything `answer` writes
-        asks.answer(tx, ask_id, ANSWER_OUTCOME, f"New tracker token configured, expires {expires}.")
+        asks.answer(tx, ask_id, ANSWER_OUTCOME, f"New tracker token configured, expires {expires}." if expires
+                    else "Publishing moved to a page backend that takes no token.")
     except TrkError as exc:
         if exc.rule != NO_PERMISSION:
             raise

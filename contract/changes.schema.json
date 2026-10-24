@@ -483,7 +483,7 @@
                   "kind": {"enum": ["human", "agent"]},
                   "display": {"type": "string"},
                   "fields": {"type": "array", "minItems": 1, "items": {"enum": ["service_user"]},
-                             "description": "actor.updated by `trk actor link` (spec 04, The commenter): the actor's link to an artifact-service author id changed. The id itself is internal and never in the feed."}
+                             "description": "actor.updated by `trk actor link` (spec 04, The commenter): the actor's link to a page commenter's author id changed. The id itself is internal and never in the feed."}
                 }
               }
             }
@@ -513,9 +513,9 @@
               "data": {
                 "required": ["key", "old", "new"],
                 "properties": {
-                  "key": {"enum": ["default-owner", "shared-agent", "template-parent", "publish-base-url", "publish-token-file", "publish-team", "publish-token-expires", "publish-home"], "description": "default-owner, shared-agent and template-parent are `trk config set`'s; the publish-* keys are `trk pages setup`'s (Page publisher). The token secret is never a value."},
+                  "key": {"enum": ["default-owner", "shared-agent", "template-parent", "publish-backend", "publish-base-url", "publish-dir", "publish-token-file", "publish-team", "publish-token-expires", "publish-home"], "description": "default-owner, shared-agent and template-parent are `trk config set`'s; the publish-* keys are `trk pages setup`'s (Page publisher). The token secret is never a value."},
                   "old": {"$ref": "#/$defs/nullable_id", "description": "null when init or the schema 2 migration first sets the default owner, when the template parent is first set, or when the first `pages setup` sets a publish-* key; the shared agent starts as worker."},
-                  "new": {"$ref": "#/$defs/id", "description": "An actor; for template-parent and publish-home, an item id; for the other publish-* keys a URL, absolute file path, team slug or YYYY-MM-DD date."}
+                  "new": {"$ref": "#/$defs/id", "description": "An actor; for template-parent and publish-home, an item id; for publish-backend a backend name; for the other publish-* keys a URL, absolute file path, team slug or YYYY-MM-DD date."}
                 }
               }
             }

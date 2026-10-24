@@ -1,7 +1,7 @@
 """Conflicts and `trk pages republish` (Page publisher spec: Conflicts; Reads and verbs), against the
-in-process fake artifact service. The real service is never called."""
+in-process fake page backend. No real backend is ever called."""
 
-import fake_artifacts
+import fake_backend
 from gated import section_file
 from test_pages_diff import at, dirty, ok, published, writes_to  # noqa: F401 (fixtures)
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
@@ -40,10 +40,10 @@ def test_a_stale_base_version_reads_the_changed_handles_and_resends_on_the_curre
     tracker_change(trk, j["id"])
     flush(trk)
     stale, resend = writes_to(fake, j["slug"])
-    assert stale["baseVersion"] == base and [e["section"] for e in stale["edits"]] == ["problem"]
-    (read,) = fake.tool_calls("get_artifact")
+    assert stale["base_version"] == base and [e["section"] for e in stale["edits"]] == ["problem"]
+    (read,) = fake.tool_calls("sections")
     assert read == {"slug": j["slug"], "handles": ["solution"]}
-    assert resend["baseVersion"] == current and "body" not in resend
+    assert resend["base_version"] == current and "body" not in resend
     assert sorted(e["section"] for e in resend["edits"]) == ["problem", "solution"]
     assert fake.body(j["slug"]) == expected(trk_home, j["id"])
     row = page_row(trk_home, j["id"])
@@ -58,7 +58,7 @@ def test_an_outside_change_the_render_agrees_with_is_not_sent_again(trk, trk_hom
     wanted = outer(expected(trk_home, j["id"]), "problem")
     current = fake.outside_write(j["slug"], edits=[{"section": "problem", "replace": wanted}])
     flush(trk)
-    assert [call["handles"] for call in fake.tool_calls("get_artifact")] == [["problem"]]
+    assert [call["handles"] for call in fake.tool_calls("sections")] == [["problem"]]
     assert len(writes_to(fake, j["slug"])) == 1  # only the stale write: the server already holds the render
     assert fake.body(j["slug"]) == expected(trk_home, j["id"])
     assert page_row(trk_home, j["id"])["version"] == current
@@ -72,9 +72,9 @@ def test_a_rename_that_conflicts_sends_the_whole_body_and_the_title_on_the_curre
     ok(trk, "edit", j["id"], "--title", "J renamed")  # the title is in the root shell: a whole body
     flush(trk, "--item", j["id"])
     stale, resend = writes_to(fake, j["slug"])
-    assert resend == {"slug": j["slug"], "baseVersion": current, "body": expected(trk_home, j["id"]),
+    assert resend == {"slug": j["slug"], "base_version": current, "body": expected(trk_home, j["id"]),
                       "title": "J renamed"}
-    assert fake.tool_calls("get_artifact") == []
+    assert fake.tool_calls("sections") == []
     assert fake.artifacts[j["slug"]]["title"] == "J renamed"
     assert pages.stored_hashes(db(trk_home), j["id"])[pages.TITLE] == pages.title_hash("J renamed")
 
@@ -84,11 +84,11 @@ def test_an_ambiguous_write_whose_retry_conflicts_on_its_own_version_adopts_it(
     j = published["J"]
     base = page_row(trk_home, j["id"])["version"]
     tracker_change(trk, j["id"])
-    fake.fail_next("502-after", tool="update_artifact")
+    fake.fail_next("502-after", tool="update")
     flush(trk)
     first, retry = writes_to(fake, j["slug"])
     assert first == retry  # the retry carries the same edits on the same base, and conflicts
-    assert len(fake.tool_calls("get_artifact")) == 1
+    assert len(fake.tool_calls("sections")) == 1
     assert fake.body(j["slug"]) == expected(trk_home, j["id"])
     assert page_row(trk_home, j["id"])["version"] == base + 1  # the version the lost answer would have given
     assert dirty(trk_home) == set()
@@ -104,8 +104,8 @@ def test_a_whole_body_that_conflicts_is_resent_whole_without_a_read(trk, trk_hom
     tracker_change(trk, j["id"])
     flush(trk)
     stale, resend = writes_to(fake, j["slug"])
-    assert "body" in stale and resend["baseVersion"] == current and resend["body"] == expected(trk_home, j["id"])
-    assert fake.tool_calls("get_artifact") == []
+    assert "body" in stale and resend["base_version"] == current and resend["body"] == expected(trk_home, j["id"])
+    assert fake.tool_calls("sections") == []
     assert fake.body(j["slug"]) == expected(trk_home, j["id"])
 
 
@@ -122,8 +122,8 @@ def test_a_changed_section_that_is_not_a_tracker_handle_sends_the_whole_body(trk
     flush(trk)
     stale, resend = writes_to(fake, j["slug"])
     assert "edits" in stale
-    assert resend["baseVersion"] == current and resend["body"] == expected(trk_home, j["id"])
-    assert fake.tool_calls("get_artifact") == []  # not one of its handles: nothing to read
+    assert resend["base_version"] == current and resend["body"] == expected(trk_home, j["id"])
+    assert fake.tool_calls("sections") == []  # not one of its handles: nothing to read
     assert fake.body(j["slug"]) == expected(trk_home, j["id"])
     assert page_row(trk_home, j["id"])["version"] == current + 1
 
@@ -137,8 +137,8 @@ def test_an_outside_change_outside_every_handle_sends_the_whole_body(trk, trk_ho
     flush(trk)
     stale, resend = writes_to(fake, j["slug"])
     assert "edits" in stale
-    assert resend["baseVersion"] == current and resend["body"] == expected(trk_home, j["id"])
-    assert fake.tool_calls("get_artifact") == []  # changedSections was empty: nothing to read
+    assert resend["base_version"] == current and resend["body"] == expected(trk_home, j["id"])
+    assert fake.tool_calls("sections") == []  # changedSections was empty: nothing to read
     assert fake.body(j["slug"]) == expected(trk_home, j["id"])
 
 
@@ -149,10 +149,10 @@ def test_a_tracker_handle_missing_on_the_server_sends_the_whole_body(trk, trk_ho
     current = fake.outside_write(j["slug"], edits=[{"section": "tiles", "replace": tiles.replace(funnel, "")}])
     tracker_change(trk, j["id"])
     flush(trk)
-    (read,) = fake.tool_calls("get_artifact")
+    (read,) = fake.tool_calls("sections")
     assert sorted(read["handles"]) == ["stage-funnel", "tiles"]
     stale, resend = writes_to(fake, j["slug"])
-    assert resend["baseVersion"] == current and resend["body"] == expected(trk_home, j["id"])
+    assert resend["base_version"] == current and resend["body"] == expected(trk_home, j["id"])
     assert fake.body(j["slug"]) == expected(trk_home, j["id"])
 
 
@@ -165,22 +165,22 @@ def test_a_second_conflict_in_the_same_flush_leaves_the_page_dirty_with_last_err
     base = page_row(trk_home, j["id"])["version"]
     rewrite(fake, j["slug"], "solution", "First outside edit.")
     tracker_change(trk, j["id"])
-    reader = fake._get_artifact
+    reader = fake._sections
 
     def read_then_someone_writes_again(arguments):
         result = reader(arguments)
         rewrite(fake, j["slug"], "solution", "Second outside edit.")
         return result
 
-    monkeypatch.setattr(fake, "_get_artifact", read_then_someone_writes_again)
+    monkeypatch.setattr(fake, "_sections", read_then_someone_writes_again)
     report = flush(trk)
     assert report["failed"] == [j["id"]]
-    assert len(writes_to(fake, j["slug"])) == 2 and len(fake.tool_calls("get_artifact")) == 1
+    assert len(writes_to(fake, j["slug"])) == 2 and len(fake.tool_calls("sections")) == 1
     row = page_row(trk_home, j["id"])
     assert (row["last_error"], row["version"]) == ("conflict", base)
     assert row["due_at"] is not None and j["id"] in dirty(trk_home)
 
-    monkeypatch.setattr(fake, "_get_artifact", reader)
+    monkeypatch.setattr(fake, "_sections", reader)
     flush(trk)  # the next flush starts again from the stored version, reads once more, and lands
     assert fake.body(j["slug"]) == expected(trk_home, j["id"])
     assert page_row(trk_home, j["id"])["last_error"] is None
@@ -192,8 +192,8 @@ def test_no_read_happens_without_a_conflict(trk, trk_home, published, fake, monk
         ok(trk, "section", "set", published["T"]["id"], "what-to-build",
            "--file", str(section_file(f"w{n}", f"Build {n}.\n")))
         flush(trk)
-    assert fake.tool_calls("update_artifact")
-    assert fake.tool_calls("get_artifact") == []
+    assert fake.tool_calls("update")
+    assert fake.tool_calls("sections") == []
 
 
 # ----- ac-4: `trk pages republish <id>` ------------------------------------------------------------------
@@ -211,8 +211,8 @@ def test_republish_sends_the_whole_body_ignoring_stored_hashes_and_refreshes_the
     assert result.code == 0, result.err
     assert result.json() == {"schema": 1, "item": j["id"], "slug": j["slug"], "version": base + 1}
     (write,) = writes_to(fake, j["slug"])
-    assert write == {"slug": j["slug"], "baseVersion": base, "body": expected(trk_home, j["id"]), "title": "J"}
-    assert fake.tool_calls("get_artifact") == []
+    assert write == {"slug": j["slug"], "base_version": base, "body": expected(trk_home, j["id"]), "title": "J"}
+    assert fake.tool_calls("sections") == []
     assert pages.stored_hashes(db(trk_home), j["id"]) == {
         **pages.hashes(expected(trk_home, j["id"])), pages.TITLE: pages.title_hash("J")}
     assert page_row(trk_home, j["id"])["version"] == base + 1
@@ -225,8 +225,8 @@ def test_republish_lands_on_the_current_version_after_an_outside_write(trk, trk_
     tracker_change(trk, j["id"])
     ok(trk, "pages", "republish", j["id"])
     stale, resend = writes_to(fake, j["slug"])
-    assert resend["baseVersion"] == current and resend["body"] == expected(trk_home, j["id"])
-    assert fake.tool_calls("get_artifact") == []
+    assert resend["base_version"] == current and resend["body"] == expected(trk_home, j["id"])
+    assert fake.tool_calls("sections") == []
     assert fake.body(j["slug"]) == expected(trk_home, j["id"])
     row = page_row(trk_home, j["id"])
     assert (row["version"], row["due_at"], row["last_error"]) == (current + 1, None, None)
@@ -235,9 +235,9 @@ def test_republish_lands_on_the_current_version_after_an_outside_write(trk, trk_
 def test_republish_clears_a_failed_page(trk, trk_home, published, fake, monkeypatch):
     j = published["J"]
     tracker_change(trk, j["id"])
-    fake.grants.discard("update_artifact")
+    fake.grants.discard("update")
     assert flush(trk, "--item", j["id"])["failed"] == [j["id"]]
-    fake.grants.add("update_artifact")
+    fake.grants.add("update")
     ok(trk, "pages", "republish", j["id"])
     row = page_row(trk_home, j["id"])
     assert (row["last_error"], row["last_error_at"], row["due_at"]) == (None, None, None)
@@ -246,7 +246,7 @@ def test_republish_clears_a_failed_page(trk, trk_home, published, fake, monkeypa
 
 def test_a_failed_republish_exits_1_and_records_the_error(trk, trk_home, published, fake, monkeypatch):
     j = published["J"]
-    fake.grants.discard("update_artifact")
+    fake.grants.discard("update")
     result = trk("pages", "republish", j["id"], "--json")
     assert (result.code, result.error()["rule"], result.error()["item"]) == (1, "republish-failed", j["id"])
     assert "tool_not_allowed" in page_row(trk_home, j["id"])["last_error"]
@@ -287,17 +287,17 @@ def test_resend_sends_outermost_handles_in_document_order_and_keeps_untouched_re
 
 def test_a_conflict_whose_changed_sections_are_id_change_objects_resends_by_handle_id(
         trk, trk_home, published, fake, monkeypatch):
-    real = fake_artifacts.changed_sections
-    monkeypatch.setattr(fake_artifacts, "changed_sections",
+    real = fake_backend.changed_sections
+    monkeypatch.setattr(fake_backend, "changed_sections",
                         lambda old, new: [{"id": h, "change": "modified"} for h in real(old, new)])
     j = published["J"]
     current = rewrite(fake, j["slug"], "solution", "Edited in the web UI.")
     tracker_change(trk, j["id"])
     flush(trk)
     stale, resend = writes_to(fake, j["slug"])
-    (read,) = fake.tool_calls("get_artifact")
+    (read,) = fake.tool_calls("sections")
     assert read == {"slug": j["slug"], "handles": ["solution"]}
-    assert resend["baseVersion"] == current and "body" not in resend
+    assert resend["base_version"] == current and "body" not in resend
     assert sorted(e["section"] for e in resend["edits"]) == ["problem", "solution"]
     assert fake.body(j["slug"]) == expected(trk_home, j["id"])
     assert page_row(trk_home, j["id"])["last_error"] is None
@@ -348,7 +348,7 @@ def test_a_title_over_200_characters_publishes_capped_and_the_body_keeps_it_whol
     j = published["J"]
     assert len(LONG) > 200
     ok(trk, "edit", j["id"], "--title", LONG)
-    flush(trk)  # the rename goes through update_artifact
+    flush(trk)  # the rename goes through update
     art = fake.artifacts[j["slug"]]
     assert len(art["title"]) <= 200 and art["title"] == flusher.page_title(LONG)
     assert LONG in fake.body(j["slug"])

@@ -224,18 +224,18 @@ You do not need herdr. Anything that can run `trk` and read JSON can drive the s
 
 ## Publishing pages (optional)
 
-trk can publish each item as a web page, with a table of its children, its open asks and its evidence. People can comment on a page, and a comment on an ask becomes a reply to it. This needs an artifact service: a web service that hosts pages and speaks the MCP protocol. Without one, trk works fully and shows "not set up" when you ask about pages.
+trk can publish each item as a web page, with a table of its children, its open asks and its evidence. Without publishing, trk works fully and shows "not set up" when you ask about pages. `trk pages render <id>` prints any page's HTML whether publishing is set up or not.
 
-Setup has three steps:
+Pages go through a backend, chosen at setup:
 
-1. Make a token for the service. Save it in a file that only you can read (`chmod 600`). Do not paste the token into a chat, a ticket or a command line.
-2. Tell trk where the service and token are. trk checks the token with one call and stores only the path to the file, never the token:
-   ```bash
-   trk pages setup --base-url https://your-service.example --token-file ~/path/to/token \
-     --expires 2027-01-31 --home <id of an open item> --team <team>
-   ```
-   `--home` names the item that the publisher's own asks sit under. Look at `trk pages setup --help` for the details.
-3. Start the timer, which runs `trk pages tick` about every minute: `./install.sh --pages` (or `trk pages timer install`).
+- `folder`, built in, writes each page as an HTML file in a directory:
+  ```bash
+  trk pages setup --backend folder --dir ~/trk-pages --home <id of an open item>
+  ```
+  Add `--base-url https://…` if a web server serves that directory, so the pages link to each other there.
+- Another backend can publish to a hosted service, where people comment on a page and a comment on an ask becomes a reply to it. Such a backend is a separate Python package that registers itself with trk (see `src/trk/publisher.py` for the interface). It usually needs a token: save the token in a file that only you can read (`chmod 600`), and pass `--token-file` and `--expires` to setup. trk checks the token with one call and stores only the path to the file, never the token.
+
+`--home` names the item that the publisher's own asks sit under. Look at `trk pages setup --help` for the details. Then start the timer, which runs `trk pages tick` about every minute: `./install.sh --pages` (or `trk pages timer install`).
 
 [docs/operations.md](docs/operations.md) covers the timer, the token's expiry and what to do when a page fails.
 

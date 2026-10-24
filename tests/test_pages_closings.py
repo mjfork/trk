@@ -1,11 +1,11 @@
 """Resolving the threads of closed asks (Page publisher spec Pub 17, amended 2026-10-19 by tr-hr642): the
-pull's closing step and `trk pages tidy`, against the in-process fake artifact service."""
+pull's closing step and `trk pages tidy`, against the in-process fake page backend."""
 
 import sqlite3
 
 import pytest
 
-from fake_artifacts import ACTIVITY
+from fake_backend import ACTIVITY
 from test_pages_flush import flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_pull import (TABLE, asked, ask, body, dispositions, item, mode, outbox,  # noqa: F401
                              pulled, replies, slug)
@@ -24,9 +24,9 @@ def answer(trk, body, ask_id, actor="kim"):
 
 
 def resolves(fake):
-    """The threads a closing reply asked to resolve (the token has no `resolve_artifact_comment`)."""
-    assert not fake.tool_calls("resolve_artifact_comment")
-    return [c["commentId"] for c in fake.tool_calls("reply_to_artifact_comment") if c["resolve"]]
+    """The threads a closing reply asked to resolve (the token has no `resolve_comment`)."""
+    assert not fake.tool_calls("resolve_comment")
+    return [c["comment_id"] for c in fake.tool_calls("reply") if c["resolve"]]
 
 
 def forget_since(trk_home, monkeypatch):
@@ -75,9 +75,9 @@ def test_ac1_the_pull_replies_and_resolves_the_threads_once_the_box_has_left(trk
 
     calls = len(fake.calls)
     pulled(trk)
-    assert [n for n, _ in fake.calls[calls:] if n == "reply_to_artifact_comment"] == []
+    assert [n for n, _ in fake.calls[calls:] if n == "reply"] == []
     assert len([r for r in outbox(trk_home) if r["body"] == closing]) == 2
-    assert all(call["resolve"] == (call["body"] == closing) for call in fake.tool_calls("reply_to_artifact_comment"))
+    assert all(call["resolve"] == (call["body"] == closing) for call in fake.tool_calls("reply"))
 
 
 @TABLE
@@ -135,12 +135,12 @@ def test_the_closing_reply_resolves_the_thread_in_the_same_call_and_never_calls_
     c = closed(trk, trk_home, body, started, fake)
     flush(trk)
     assert fake.comments[c]["status"] == "resolved" and resolves(fake) == [c]
-    assert marker(trk_home, c)["state"] == "resolved" and "resolve_artifact_comment" not in dict(fake.calls)
+    assert marker(trk_home, c)["state"] == "resolved" and "resolve_comment" not in dict(fake.calls)
 
 
 def test_an_ambiguous_closing_reply_is_not_sent_twice_and_resolves_the_thread(trk, trk_home, body, started, fake):
     c = closed(trk, trk_home, body, started, fake)
-    fake.fail_next("502-after", tool="reply_to_artifact_comment")  # posted (and resolved), then the edge answered 502
+    fake.fail_next("502-after", tool="reply")  # posted (and resolved), then the edge answered 502
     flush(trk)
     pulled(trk)
     pulled(trk)
@@ -151,7 +151,7 @@ def test_an_ambiguous_closing_reply_is_not_sent_twice_and_resolves_the_thread(tr
 def test_an_ambiguous_closing_reply_that_left_the_thread_open_is_given_up_and_reported(trk, trk_home, body, started,
                                                                                          fake):
     c = closed(trk, trk_home, body, started, fake)
-    fake.fail_next("502-after", tool="reply_to_artifact_comment")
+    fake.fail_next("502-after", tool="reply")
     flush(trk)
     fake.comments[c]["status"] = "open"  # the lost call posted the reply but the thread is not resolved
     errors = [e["error"] for e in pulled(trk)["errors"]]
@@ -162,13 +162,13 @@ def test_an_ambiguous_closing_reply_that_left_the_thread_open_is_given_up_and_re
 
 def test_a_closing_reply_the_service_does_not_resolve_is_final(trk, trk_home, body, started, fake, monkeypatch):
     c = closed(trk, trk_home, body, started, fake)
-    real = fake._reply_to_artifact_comment
+    real = fake._reply
 
     def refuse_to_resolve(a):  # the token's owner may not resolve here: the reply lands, resolved false plus a note
-        fake.give_away(fake.comments[a["commentId"]]["slug"])
+        fake.give_away(fake.comments[a["comment_id"]]["slug"])
         return real(a)
 
-    monkeypatch.setattr(fake, "_reply_to_artifact_comment", refuse_to_resolve)
+    monkeypatch.setattr(fake, "_reply", refuse_to_resolve)
     flush(trk)
     errors = [e["error"] for e in pulled(trk)["errors"]]
     assert fake.comments[c]["status"] != "resolved" and marker(trk_home, c)["state"] == "gone"
@@ -179,13 +179,13 @@ def test_a_closing_reply_the_service_does_not_resolve_is_final(trk, trk_home, bo
 
 def test_a_thread_whose_closing_reply_was_refused_is_not_resolved_until_it_is_resent(trk, trk_home, body, started, fake):
     c = closed(trk, trk_home, body, started, fake)
-    fake.grants.discard("reply_to_artifact_comment")
+    fake.grants.discard("reply")
     flush(trk)
     pulled(trk)
     closing = [r for r in outbox(trk_home) if r["body"] == CLOSED.format(a=started["A"])]
     assert [r["state"] for r in closing] == ["failed"] and resolves(fake) == []
     assert fake.comments[c]["status"] != "resolved"
-    fake.grants.add("reply_to_artifact_comment")
+    fake.grants.add("reply")
     assert trk("pages", "reply", "resend", str(closing[0]["id"])).code == 0
     pulled(trk)
     assert fake.comments[c]["status"] == "resolved" and len(closing_replies(fake, c, started)) == 1
@@ -194,7 +194,7 @@ def test_a_thread_whose_closing_reply_was_refused_is_not_resolved_until_it_is_re
 def test_a_closing_reply_that_cannot_be_sent_does_not_hold_another_page_from_dropping_the_box(
         trk, trk_home, body, started, fake):
     closed(trk, trk_home, body, started, fake)
-    fake.fail_next("502-after", tool="reply_to_artifact_comment", times=50)
+    fake.fail_next("502-after", tool="reply", times=50)
     report = flush(trk)
     for key in ("D", "J", "P"):
         assert f'data-comment-id="ask-{started["A"]}"' not in fake.body(slug(trk_home, started[key]))
@@ -202,21 +202,21 @@ def test_a_closing_reply_that_cannot_be_sent_does_not_hold_another_page_from_dro
 
 
 def test_a_thread_the_service_cannot_find_is_given_up_not_retried_forever(trk, trk_home, body, started, fake, monkeypatch):
-    from fake_artifacts import _error
+    from fake_backend import refuse
 
     c = closed(trk, trk_home, body, started, fake)
-    real = fake._reply_to_artifact_comment
-    monkeypatch.setattr(fake, "_reply_to_artifact_comment",
-                        lambda a: _error("not_found") if a["body"].startswith("Closed: ") else real(a))
+    real = fake._reply
+    monkeypatch.setattr(fake, "_reply",
+                        lambda a: refuse("not_found") if a["body"].startswith("Closed: ") else real(a))
     flush(trk)
     pulled(trk)
     assert marker(trk_home, c)["state"] == "gone"
-    assert len([call for call in fake.tool_calls("reply_to_artifact_comment") if call["body"].startswith("Closed: ")]) == 1
+    assert len([call for call in fake.tool_calls("reply") if call["body"].startswith("Closed: ")]) == 1
 
 
 def test_a_pending_closing_reply_is_dropped_when_the_ask_is_reopened(trk, trk_home, body, started, fake):
     c = closed(trk, trk_home, body, started, fake)
-    fake.fail_next("502", tool="reply_to_artifact_comment", times=50)  # the closing reply is queued, never sent
+    fake.fail_next("502", tool="reply", times=50)  # the closing reply is queued, never sent
     flush(trk)
     assert [r["state"] for r in outbox(trk_home) if r["body"] == CLOSED.format(a=started["A"])] == ["pending"]
     assert marker(trk_home, c)["state"] == "queued"

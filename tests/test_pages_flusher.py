@@ -1,24 +1,21 @@
 """The background flusher and the timer (Page publisher spec: Flusher; Timer and the pull; Amendments
-to Core's spawn check and second lock file), against the fake artifact service: in process, or
+to Core's spawn check and second lock file), against the fake page backend: in process, or
 behind a localhost HTTP server for the one test that starts a real detached flusher. The real
 service is never called, and no systemd unit is installed: the timer tests use a temp unit
 directory and a stub `systemctl`."""
 
 import fcntl
-import http.server
 import json
 import os
 import sqlite3
 import subprocess
 import sys
-import threading
 import time
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-from fake_artifacts import FakeArtifactService
 from gated import section_file
 from test_pages_diff import at, dirty, ok, published, writes_to  # noqa: F401 (fixtures)
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
@@ -224,7 +221,7 @@ def test_flush_wait_with_nothing_dirty_exits_at_once(trk, trk_home, published, f
 def test_flush_wait_exits_when_only_failed_pages_are_dirty(trk, trk_home, published, fake, sleeps, monkeypatch):
     at(monkeypatch, "2026-10-11T09:10:00Z")
     section_set(trk, published["T"]["id"], "Will fail.\n")
-    fake.fail_next("500", tool="update_artifact", times=3)
+    fake.fail_next("500", tool="update", times=3)
     report = flush_wait(trk)
     assert sleeps == [60.0]  # one sleep to the due time, none after every page failed
     assert report["failed"] == [published["T"]["id"]]
@@ -310,14 +307,13 @@ def test_flush_wait_marks_writes_that_land_during_a_pass(trk, trk_home, publishe
 def test_every_call_runs_under_pages_lock_and_outside_any_write_transaction(trk, trk_home, live, fake, sleeps,
                                                                               monkeypatch):
     held = []
-    real_call = type(fake).__call__
+    real_call = fake.call
 
-    def watched(self, url, headers, body):
-        if json.loads(body).get("method") == "tools/call":
-            held.append((lock_free(trk_home), write_lock_free(trk_home)))
-        return real_call(self, url, headers, body)
+    def watched(name, arguments, **kwargs):
+        held.append((lock_free(trk_home), write_lock_free(trk_home)))
+        return real_call(name, arguments, **kwargs)
 
-    monkeypatch.setattr(type(fake), "__call__", watched)
+    monkeypatch.setattr(fake, "call", watched)
     flush_wait(trk)
     assert held and set(held) == {(False, True)}
 
@@ -356,7 +352,7 @@ def test_tick_runs_the_token_check_and_the_next_tick_after_setup_catches_up(trk,
     held = trk("pages", "tick", "--json")
     assert held.code == 0, held.err
     assert held.json()["held"] is True and held.json()["renewal_ask"] == renewal_asks(trk_home)[0]["id"]
-    assert fake.tool_calls("publish_artifact") == []
+    assert fake.tool_calls("publish") == []
     assert renew(trk, fake, tmp_path, live["P"], "--as", "michael").code == 0
     caught_up = trk("pages", "tick", "--json").json()
     assert caught_up["held"] is False
@@ -484,48 +480,20 @@ def test_tests_cannot_reach_the_default_unit_directory(trk, monkeypatch):
 # ----- a real detached flusher, end to end ------------------------------------------------------------
 
 
-class _Handler(http.server.BaseHTTPRequestHandler):
-    service = None
-
-    def do_POST(self):  # noqa: N802 - the http.server hook's name
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        status, headers, raw = self.service(self.service.base_url + self.path, dict(self.headers.items()), body)
-        self.send_response(status)
-        for name, value in headers.items():
-            self.send_header(name, value)
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def log_message(self, *args):
-        pass
-
-
-def test_a_write_starts_a_real_detached_flusher_that_publishes_and_exits(trk, trk_home, tree, token_file,
-                                                                          monkeypatch):
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    service = FakeArtifactService(base_url=f"http://127.0.0.1:{server.server_address[1]}")
-    handler = type("Handler", (_Handler,), {"service": service})
-    server.RequestHandlerClass = handler
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        monkeypatch.delenv("TRK_ARTIFACT_TOKEN", raising=False)
-        argv = list(setup_argv(token_file, tree["P"]))
-        argv[argv.index("--base-url") + 1] = service.base_url
-        ok(trk, *argv)
-        monkeypatch.setattr(spawn, "launch", REAL_LAUNCH)
-        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(filter(None, [str(SRC), os.environ.get("PYTHONPATH")])))
-        section_set(trk, tree["T"], "Detached.\n")
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            if len(service.tool_calls("publish_artifact")) == 5 and not (trk_home / spawn.PID_NAME).exists():
-                break
-            time.sleep(0.1)
-        assert len(service.tool_calls("publish_artifact")) == 5, (trk_home / spawn.LOG_NAME).read_text()
-        assert not (trk_home / spawn.PID_NAME).exists()
-        assert (trk_home / spawn.LOG_NAME).exists()
-    finally:
-        server.shutdown()
-        server.server_close()
+def test_a_write_starts_a_real_detached_flusher_that_publishes_and_exits(trk, trk_home, tree, tmp_path, monkeypatch):
+    """The detached process loads its backend by name, so this one publishes to the built-in folder backend."""
+    out = tmp_path / "pages"
+    ok(trk, "pages", "setup", "--backend", "folder", "--dir", str(out), "--home", tree["P"])
+    monkeypatch.setattr(spawn, "launch", REAL_LAUNCH)
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(filter(None, [str(SRC), os.environ.get("PYTHONPATH")])))
+    section_set(trk, tree["T"], "Detached.\n")
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if len(list(out.glob("*.html"))) == 5 and not (trk_home / spawn.PID_NAME).exists():
+            break
+        time.sleep(0.1)
+    assert len(list(out.glob("*.html"))) == 5, (trk_home / spawn.LOG_NAME).read_text()
+    assert not (trk_home / spawn.PID_NAME).exists()
+    assert (trk_home / spawn.LOG_NAME).exists()
 
 

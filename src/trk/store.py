@@ -300,8 +300,8 @@ END;
     for table in ("evidence", "ledger", "ledger_verdicts", "ledger_settlements", "ledger_promotions")
 )
 
-# Page publisher: its bookkeeping (a cache of what was sent to the artifact service, never journaled)
-# and the actors column that links an actor to an artifact-service author id. A page's key
+# Page publisher: its bookkeeping (a cache of what was sent to the page backend, never journaled)
+# and the actors column that links an actor to a page commenter's author id. A page's key
 # (`item_id`) is an item id, or `needs-you:<actor>` for a person's Needs-you page, so neither
 # bookkeeping table references items (schema 6 dropped that foreign key).
 PAGES_TABLES = """

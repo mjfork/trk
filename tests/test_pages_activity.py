@@ -1,6 +1,6 @@
-"""The cross-page comment activity log (Page publisher spec: Reading comments, service change 2): when `tools/list`
-offers `list_comment_activity`, the pull reads one activity log from `meta.comment_cursor` instead of
-listing comments page by page. Against the in-process fake artifact service; the real one is never called.
+"""The cross-page comment activity log (Page publisher spec: Reading comments): when the backend
+offers `activity`, the pull reads one activity log from `meta.comment_cursor` instead of
+listing comments page by page. Against the in-process fake page backend; the real one is never called.
 The disposition table itself runs in both modes in test_pages_pull.py."""
 
 import json
@@ -8,11 +8,11 @@ import sqlite3
 
 import pytest
 
-from fake_artifacts import ACTIVITY, OWNER_ID
+from fake_backend import ACTIVITY, OWNER_ID, refuse
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_pull import ask, asked, body, confirm, dispositions, item, pulled, replies, slug  # noqa: F401
 from test_pages_setup import fake, journal, meta, setup_argv, token_file, tree  # noqa: F401 (fixtures)
-from trk import artifacts, pull
+from trk import pull
 
 pytestmark = pytest.mark.usefixtures("live")
 
@@ -34,7 +34,7 @@ def set_cursor(trk_home, value):
 
 def foreign(fake):
     """An artifact the token's owner owns that is no tracker page."""
-    fake._publish_artifact({"title": "Notes", "body": "<p data-comment-id=\"waiting\">x</p>", "team": "tracker",
+    fake._publish({"title": "Notes", "body": "<p data-comment-id=\"waiting\">x</p>", "team": "tracker",
                             "tags": []})
     return max(fake.artifacts)
 
@@ -51,16 +51,16 @@ def test_with_the_activity_log_offered_a_pull_makes_one_activity_call_and_lists_
     report = pulled(trk)
     assert report["activity"] == {"seeded": False, "events": 1}
     assert [e["disposition"] for e in report["comments"]] == ["reply"]
-    assert [name for name, _args in fake.calls] == [ACTIVITY, "reply_to_artifact_comment"]
+    assert [name for name, _args in fake.calls] == [ACTIVITY, "reply"]
     assert seeded == pull.START  # the log was empty: the next call reads from its oldest event
-    assert fake.tool_calls(ACTIVITY) == [{"limit": pull.ACTIVITY_LIMIT, "scope": "all"}]
+    assert fake.tool_calls(ACTIVITY) == [{"cursor": None, "limit": pull.ACTIVITY_LIMIT}]
     assert item(trk, asked["A"])["status"] == "open" and replies(fake, c)[0][1] == "assistant"
 
 
 def test_without_the_activity_log_the_pull_lists_page_by_page(trk, trk_home, asked, fake):
     report = pulled(trk)
     assert report["activity"] is None and fake.tool_calls(ACTIVITY) == []
-    assert fake.tool_calls("list_artifact_comments")
+    assert fake.tool_calls("list_comments")
     assert meta(trk_home, "comment_cursor") is None
 
 
@@ -81,7 +81,7 @@ def test_the_activity_log_is_paged_while_has_more(trk, trk_home, asked, fake, mo
 
 
 def test_an_activity_log_offered_but_not_granted_is_recorded_and_the_per_page_pull_still_runs(trk, trk_home, asked, fake):
-    fake.activity = True  # tools/list offers it, the token lacks the grant
+    fake.activity = True  # offered, but the token lacks the grant
     c = fake.add_comment(slug(trk_home, asked["D"]), f"ask-{asked['A']}", "Metres.", author_id="u-kim")
     report = pulled(trk)
     assert dispositions(trk_home)[c] == ("reply", asked["A"])
@@ -101,22 +101,22 @@ def test_an_activity_log_failure_part_way_keeps_what_was_read_and_falls_back_to_
     monkeypatch.setattr(pull, "ACTIVITY_LIMIT", 1)
     first = fake.add_comment(slug(trk_home, asked["D"]), "header", "one", author_id="u-sam")
     second = fake.add_comment(slug(trk_home, asked["T"]), "header", "two", author_id="u-sam")
-    real = fake._list_comment_activity
+    real = fake._activity
     calls = []
 
     def failing_second_page(arguments):
         calls.append(arguments)
         if len(calls) >= 2:
-            return {"content": [{"type": "text", "text": "internal_error (try again)"}], "isError": True}
+            refuse("internal_error (try again)")
         return real(arguments)
 
-    monkeypatch.setattr(fake, "_list_comment_activity", failing_second_page)
+    monkeypatch.setattr(fake, "_activity", failing_second_page)
     report = pulled(trk)
     assert first in dispositions(trk_home) and second not in dispositions(trk_home)
     assert meta(trk_home, "comment_cursor") not in (None, seeded)  # moved past the first page only
-    assert fake.tool_calls("list_artifact_comments")  # the fallback read the pages showing an ask
+    assert fake.tool_calls("list_comments")  # the fallback read the pages showing an ask
     assert report["errors"] and page_row(trk_home, asked["D"])["last_error"].startswith(f"{ACTIVITY}: internal_error")
-    monkeypatch.setattr(fake, "_list_comment_activity", real)
+    monkeypatch.setattr(fake, "_activity", real)
     pulled(trk)
     assert second in dispositions(trk_home)
     assert page_row(trk_home, asked["D"])["last_error"] is None
@@ -140,7 +140,7 @@ def test_the_trackers_replies_and_status_events_never_become_answers(trk, trk_ho
     report = pulled(trk)
     assert report["activity"]["events"] == 2 and report["comments"] == []
     assert dispositions(trk_home) == before and list(before) == [c]
-    assert len(fake.tool_calls("reply_to_artifact_comment")) == 1
+    assert len(fake.tool_calls("reply")) == 1
 
 
 def test_a_persons_reply_or_resolve_on_a_thread_never_read_is_no_new_comment(trk, trk_home, asked, fake):
@@ -154,7 +154,7 @@ def test_a_persons_reply_or_resolve_on_a_thread_never_read_is_no_new_comment(trk
     fake._event("status", fake.comments[root], "2026-10-11T13:01:00.000Z", status="resolved")
     report = pulled(trk)
     assert report["activity"]["events"] == 2 and report["comments"] == []
-    assert dispositions(trk_home) == {} and fake.tool_calls("reply_to_artifact_comment") == []
+    assert dispositions(trk_home) == {} and fake.tool_calls("reply") == []
 
 
 def test_a_reopened_ask_is_not_answered_by_the_old_threads_status_event(trk, trk_home, asked, fake, monkeypatch):
@@ -213,14 +213,14 @@ def test_the_first_pull_drains_the_activity_log_to_seed_it_and_answers_no_histor
     assert isinstance(cursor, str) and cursor
     fake.calls.clear()
     assert pulled(trk)["activity"] == {"seeded": False, "events": 0}
-    assert fake.tool_calls(ACTIVITY) == [{"cursor": cursor, "limit": 2, "scope": "all"}]
+    assert fake.tool_calls(ACTIVITY) == [{"cursor": cursor, "limit": 2}]
 
 
 def test_the_cursor_is_stored_as_the_service_gave_it(trk, trk_home, asked, fake):
     offer(fake)
     fake.add_comment(slug(trk_home, asked["T"]), "header", "x", author_id="u-sam")
     pulled(trk)
-    given = json.loads(fake._list_comment_activity({})["content"][0]["text"])["cursor"]
+    given = fake._activity({})["cursor"]
     assert meta(trk_home, "comment_cursor") == given
 
 
@@ -258,8 +258,8 @@ def test_replies_use_the_events_root_comment_id(trk, trk_home, asked, fake):
     c = fake.add_comment(slug(trk_home, asked["D"]), f"ask-{asked['A']}", "Metres.", author_id="u-kim")
     (event,) = [e for e in fake.events if e["type"] == "comment" and e["rootCommentId"] == c]
     pulled(trk)
-    (sent,) = fake.tool_calls("reply_to_artifact_comment")
-    assert sent["commentId"] == event["rootCommentId"] and sent["slug"] == event["slug"]
+    (sent,) = fake.tool_calls("reply")
+    assert sent["comment_id"] == event["rootCommentId"] and sent["slug"] == event["slug"]
 
 
 def test_a_seed_of_an_empty_log_sticks_though_the_service_gives_no_cursor(trk, trk_home, asked, fake):
@@ -276,20 +276,12 @@ def test_a_seed_of_an_empty_log_sticks_though_the_service_gives_no_cursor(trk, t
 # ----- reading only what the per-page read would ------------------------------------------------------
 
 
-def test_a_tools_list_failure_is_recorded_and_the_pass_reads_page_by_page(trk, trk_home, asked, fake, monkeypatch):
+def test_an_offers_activity_failure_is_recorded_and_the_pass_reads_page_by_page(trk, trk_home, asked, fake, monkeypatch):
     offer(fake)
-    real = fake.__call__
-
-    def failing_tools_list(url, headers, raw):
-        if b'"tools/list"' in raw:
-            return 500, {}, b""
-        return real(url, headers, raw)
-
-    monkeypatch.setattr(artifacts, "urllib_transport", failing_tools_list)
+    fake.fail_next("500", tool="offers_activity")
     report = pulled(trk)
-    assert report["activity"] is None and fake.tool_calls("list_artifact_comments")
-    assert page_row(trk_home, asked["D"])["last_error"].startswith("tools/list: HTTP 500")
-    monkeypatch.setattr(artifacts, "urllib_transport", fake)
+    assert report["activity"] is None and fake.tool_calls("list_comments")
+    assert page_row(trk_home, asked["D"])["last_error"].startswith("offers_activity: HTTP 500")
     pulled(trk)
     assert page_row(trk_home, asked["D"])["last_error"] is None
 
@@ -324,7 +316,7 @@ def test_a_comment_on_a_page_whose_publish_is_in_doubt_is_read_once_it_is_adopte
     report = pulled(trk)
     assert [(e["comment"], e["disposition"]) for e in report["comments"]] == [(on_t, "which-ask")]
     assert meta(trk_home, "comment_cursor") != before
-    assert len(fake.tool_calls("reply_to_artifact_comment")) == 2  # the answer's reply was not sent twice
+    assert len(fake.tool_calls("reply")) == 2  # the answer's reply was not sent twice
 
 
 def test_with_no_publish_in_doubt_comments_elsewhere_do_not_hold_the_cursor(trk, trk_home, asked, fake):

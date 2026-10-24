@@ -1,12 +1,12 @@
 """Reopen and withdrawal on the page (Page publisher spec: Amendments to Asks and owners, On the page
-afterwards, Pull-before-drop; AC 8 and AC 9), against the in-process fake artifact service. The real
+afterwards, Pull-before-drop; AC 8 and AC 9), against the in-process fake page backend. The real
 service is never called."""
 
 import json
 
 import pytest
 
-import fake_artifacts
+import fake_backend
 from trk import pages
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_pull import (RECEIVED, TABLE, actor_row, ask, asked, body, confirm, dispositions, item,  # noqa: F401
@@ -66,7 +66,7 @@ def test_ac8_reopen_journals_returns_the_box_and_posts_the_reason_on_the_answers
     report = tick(trk)
     assert report["pull"]["replies"]["sent"] == [kim]
     assert replies(fake, kim)[-1] == ("Reopened by worker: need units", "assistant")
-    assert fake.tool_calls("reply_to_artifact_comment")[-1]["resolve"] is False  # not a closing reply
+    assert fake.tool_calls("reply")[-1]["resolve"] is False  # not a closing reply
     assert fake.comments[kim]["status"] == "resolved"  # closed when the box left; the service has no un-resolve
     flush(trk)
     for key in ("D", "J", "P"):
@@ -142,15 +142,15 @@ def withdrawn(trk, trk_home, answered, fake):
     assert item(trk, a)["resolution"] != "done"
     fake.calls.clear()
     after = []  # per call in fake.calls: the body of its page once the call was done
-    tool = fake._tool
+    tool = fake.call
 
-    def recording(name, arguments):
-        result = tool(name, arguments)
+    def recording(name, arguments, **kwargs):
+        result = tool(name, arguments, **kwargs)
         if len(after) < len(fake.calls):
             after.append(fake.body(arguments["slug"]) if arguments.get("slug") in fake.artifacts else "")
         return result
 
-    fake._tool = recording
+    fake.call = recording
     return {**answered, "late": late, "after": after}
 
 
@@ -159,7 +159,7 @@ def _drops(fake, trk_home, withdrawn):
     handle = f'data-comment-id="ask-{withdrawn["A"]}"'
     slugs = {slug(trk_home, withdrawn[key]) for key in ("D", "J", "P")}
     return [index for index, (tool, args), body in zip(range(len(fake.calls)), fake.calls, withdrawn["after"])
-            if tool == "update_artifact" and args["slug"] in slugs and handle not in body]
+            if tool == "update" and args["slug"] in slugs and handle not in body]
 
 
 @TABLE
@@ -172,7 +172,7 @@ def test_ac9_the_next_tick_replies_withdrawn_before_any_page_drops_the_box(trk, 
     assert dispositions(trk_home)[late] == ("withdrawn", withdrawn["A"])
     assert heard(fake, late) == [("Withdrawn: Dropped the question", "assistant")]
     assert fake.comments[late]["status"] in ("outdated", "resolved")  # left open, then outdated as the box left, or closed with it
-    reply_at = next(i for i, (tool, _a) in enumerate(fake.calls) if tool == "reply_to_artifact_comment")
+    reply_at = next(i for i, (tool, _a) in enumerate(fake.calls) if tool == "reply")
     drops = _drops(fake, trk_home, withdrawn)
     assert drops and reply_at < min(drops)
 
@@ -184,7 +184,7 @@ def test_a_flush_that_drops_an_ask_handle_pulls_first(trk, trk_home, withdrawn, 
     assert withdrawn["D"] in report["updated"]
     assert heard(fake, late) == [("Withdrawn: Dropped the question", "assistant")]
     assert fake.comments[late]["status"] in ("outdated", "resolved")  # left open, then outdated as the box left, or closed with it
-    reply_at = next(i for i, (tool, _a) in enumerate(fake.calls) if tool == "reply_to_artifact_comment")
+    reply_at = next(i for i, (tool, _a) in enumerate(fake.calls) if tool == "reply")
     drops = _drops(fake, trk_home, withdrawn)
     assert len(drops) == 3 and reply_at < min(drops)
     for key in ("D", "J", "P"):
@@ -194,24 +194,24 @@ def test_a_flush_that_drops_an_ask_handle_pulls_first(trk, trk_home, withdrawn, 
 def test_a_flush_that_drops_nothing_does_not_pull(trk, trk_home, asked, fake, body):
     assert trk("section", "set", asked["T"], "what-to-build", "--file", body("Changed.\n")[1:]).code == 0
     flush(trk)
-    assert fake.tool_calls("list_artifact_comments") == []
+    assert fake.tool_calls("list_comments") == []
 
 
 def test_when_the_dropping_pages_listing_fails_the_page_waits(trk, trk_home, withdrawn, fake):
     d_slug = slug(trk_home, withdrawn["D"])
-    original = fake._list_artifact_comments
+    original = fake._list_comments
 
     def failing_for_d(arguments):
         if arguments["slug"] == d_slug:
-            return fake_artifacts._error("internal_error (listing down)")
+            fake_backend.refuse("internal_error (listing down)")
         return original(arguments)
 
-    fake._list_artifact_comments = failing_for_d
+    fake._list_comments = failing_for_d
     report = flush(trk)
     assert withdrawn["D"] in report["failed"]
     assert "pull-before-drop" in page_row(trk_home, withdrawn["D"])["last_error"]
     assert shows(fake, trk_home, withdrawn["D"], f"ask-{withdrawn['A']}")
-    fake._list_artifact_comments = original
+    fake._list_comments = original
     report = flush(trk)
     assert withdrawn["D"] in report["updated"]
     assert heard(fake, withdrawn["late"]) == [("Withdrawn: Dropped the question", "assistant")]
@@ -223,14 +223,14 @@ def test_a_comment_written_after_the_last_listing_but_before_the_drop_is_read_on
                                                                                      fake):
     d_slug, handle = slug(trk_home, withdrawn["D"]), f"ask-{withdrawn['A']}"
     kim_slug = slug(trk_home, "needs-you:kim")  # the last page to drop the box, after D, J and P
-    update, sneaked = fake._update_artifact, []
+    update, sneaked = fake._update, []
 
     def comment_first(arguments):
         if arguments["slug"] == kim_slug and not sneaked:
             sneaked.append(fake.add_comment(kim_slug, handle, "Inches!", author_id="u-kim"))
         return update(arguments)
 
-    fake._update_artifact = comment_first
+    fake._update = comment_first
     flush(trk)
     (late,) = sneaked
     assert fake.comments[late]["status"] == "outdated" and late not in dispositions(trk_home)
@@ -239,14 +239,14 @@ def test_a_comment_written_after_the_last_listing_but_before_the_drop_is_read_on
     assert heard(fake, late) == [("Withdrawn: Dropped the question", "assistant")]
     fake.calls.clear()
     pulled(trk)
-    assert not {d_slug, kim_slug} & {args["slug"] for args in fake.tool_calls("list_artifact_comments")}
+    assert not {d_slug, kim_slug} & {args["slug"] for args in fake.tool_calls("list_comments")}
 
 
 @TABLE
 def test_a_reply_that_fails_holds_every_drop_of_the_box_until_it_is_sent(trk, trk_home, withdrawn, fake):
     late, handle = withdrawn["late"], f"ask-{withdrawn['A']}"
     dropping = [withdrawn[k] for k in ("D", "J", "P")] + ["needs-you:kim"]
-    fake.fail_next("502", tool="reply_to_artifact_comment", times=4)  # each dropping page's pass tries it once
+    fake.fail_next("502", tool="reply", times=4)  # each dropping page's pass tries it once
     report = flush(trk)
     assert sorted(report["failed"]) == sorted(dropping)
     assert _drops(fake, trk_home, withdrawn) == [] and heard(fake, late) == []
@@ -259,7 +259,7 @@ def test_a_reply_that_fails_holds_every_drop_of_the_box_until_it_is_sent(trk, tr
     assert heard(fake, late) == [("Withdrawn: Dropped the question", "assistant")]
     assert fake.comments[late]["status"] in ("outdated", "resolved")  # left open, then outdated as the box left, or closed with it
     reply_at = max(i for i, (tool, args) in enumerate(fake.calls)  # the closing reply follows the drop, by design
-                   if tool == "reply_to_artifact_comment" and not args["body"].startswith("Closed: "))
+                   if tool == "reply" and not args["body"].startswith("Closed: "))
     drops = _drops(fake, trk_home, withdrawn)
     assert len(drops) == 3 and reply_at < min(drops)
 
@@ -272,13 +272,13 @@ def errors(trk):
 
 def test_a_reply_refused_for_good_holds_one_flush_and_stays_listed_after_the_drop(trk, trk_home, withdrawn, fake):
     late, d_slug = withdrawn["late"], slug(trk_home, withdrawn["D"])
-    fake.grants.discard("reply_to_artifact_comment")  # the reply is refused outright
+    fake.grants.discard("reply")  # the reply is refused outright
     report = flush(trk)
     assert withdrawn["D"] in report["failed"] and _drops(fake, trk_home, withdrawn) == []
     assert all(shows(fake, trk_home, withdrawn[k], f"ask-{withdrawn['A']}") for k in ("J", "P"))
     error = page_row(trk_home, withdrawn["J"])["last_error"]
     assert f"the reply to comment {late} was refused for good" in error and "the next flush drops the box" in error
-    fake.grants.add("reply_to_artifact_comment")  # replies are allowed again; the refusal stays final
+    fake.grants.add("reply")  # replies are allowed again; the refusal stays final
     flush(trk)  # the failed reply is never sent again, so it holds nothing now
     for key in ("D", "J", "P"):
         assert not shows(fake, trk_home, withdrawn[key], f"ask-{withdrawn['A']}")
@@ -292,12 +292,12 @@ def test_a_reply_refused_for_good_holds_one_flush_and_stays_listed_after_the_dro
 
 
 def test_a_failed_reply_is_dismissed_with_a_reason_or_resent(trk, trk_home, withdrawn, fake):
-    fake.grants.discard("reply_to_artifact_comment")
+    fake.grants.discard("reply")
     flush(trk)
     (failed,) = errors(trk)["failed_replies"]
     reply = str(failed["reply"])
     assert trk("pages", "reply", "dismiss", reply).code == 2  # a dismissal needs a reason
-    fake.grants.add("reply_to_artifact_comment")
+    fake.grants.add("reply")
     resent = trk("pages", "reply", "resend", reply, "--json")
     assert resent.code == 0, resent.err and resent.json()["state"] == "pending"
     assert errors(trk)["failed_replies"] == []
@@ -310,7 +310,7 @@ def test_a_failed_reply_is_dismissed_with_a_reason_or_resent(trk, trk_home, with
 
 
 def test_a_dismissed_failed_reply_leaves_the_errors_list(trk, trk_home, withdrawn, fake):
-    fake.grants.discard("reply_to_artifact_comment")
+    fake.grants.discard("reply")
     flush(trk)
     (failed,) = errors(trk)["failed_replies"]
     done = trk("pages", "reply", "dismiss", str(failed["reply"]), "--reason", "told Kim in person", "--json")
@@ -323,7 +323,7 @@ def test_a_failed_reply_on_another_asks_box_does_not_hold_the_drop(trk, trk_home
     a2 = ask(withdrawn["T"], title="Which colour?")
     flush(trk, "--item", withdrawn["T"])  # T's page only: D, J and P still show the withdrawn box
     other = fake.add_comment(slug(trk_home, withdrawn["T"]), f"ask-{a2}", "Blue.", author_id="u-kim")
-    fake.grants.discard("reply_to_artifact_comment")
+    fake.grants.discard("reply")
     pulled(trk)  # records a reply to A2; the tracker's reply is refused and failed
     report = flush(trk)
     assert dispositions(trk_home)[other] == ("reply", a2)
@@ -333,11 +333,11 @@ def test_a_failed_reply_on_another_asks_box_does_not_hold_the_drop(trk, trk_home
 
 
 def test_a_401_in_pull_before_drop_holds_the_flush_and_drops_nothing(trk, trk_home, withdrawn, fake):
-    fake.fail_next("401", tool="list_artifact_comments")
+    fake.fail_next("401", tool="list_comments")
     report = flush(trk)
     assert report["held"] is True and report["renewal_ask"]
     assert report["updated"] == [] and _drops(fake, trk_home, withdrawn) == []
-    assert fake.tool_calls("reply_to_artifact_comment") == []
+    assert fake.tool_calls("reply") == []
     assert shows(fake, trk_home, withdrawn["D"], f"ask-{withdrawn['A']}")
 
 
@@ -345,8 +345,8 @@ def test_republish_that_drops_an_ask_handle_pulls_first(trk, trk_home, withdrawn
     result = trk("pages", "republish", withdrawn["D"])
     assert result.code == 0, result.err
     assert heard(fake, withdrawn["late"]) == [("Withdrawn: Dropped the question", "assistant")]
-    reply_at = next(i for i, (tool, _a) in enumerate(fake.calls) if tool == "reply_to_artifact_comment")
-    update_at = next(i for i, (tool, _a) in enumerate(fake.calls) if tool == "update_artifact")
+    reply_at = next(i for i, (tool, _a) in enumerate(fake.calls) if tool == "reply")
+    update_at = next(i for i, (tool, _a) in enumerate(fake.calls) if tool == "update")
     assert reply_at < update_at
 
 
@@ -360,7 +360,7 @@ def test_the_fake_marks_comments_outdated_when_their_handle_goes_and_open_when_i
     done = fake.add_comment(d_slug, handle, "Metres.", author_id="u-kim")
     fake.comments[done]["status"] = "resolved"
     shown = fake.body(d_slug)
-    (start, end), = fake_artifacts.element_spans(shown, handle)
+    (start, end), = fake_backend.element_spans(shown, handle)
     fake.outside_write(d_slug, body=shown[:start] + shown[end:])
     assert (fake.comments[on_box]["status"], fake.comments[done]["status"]) == ("outdated", "resolved")
     fake.outside_write(d_slug, body=shown)

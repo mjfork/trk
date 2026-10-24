@@ -87,6 +87,15 @@ SELECT items.* FROM items JOIN down ON items.id = down.id ORDER BY items.id
 """
 
 
+def _page_url(url):
+    """A published page's URL as a link: what `markdown.safe_url` allows, and a `file:` URL, which the
+    folder backend gives a page it writes to a directory nobody serves. Only the publisher's own page
+    URLs get this; a link written in an item never does."""
+    if url and url.strip().lower().startswith("file:///"):
+        return url
+    return markdown.safe_url(url)
+
+
 class _Page:
     def __init__(self, conn, row, kind):
         self.conn = conn
@@ -104,24 +113,24 @@ class _Page:
 
     def person(self, actor_id):
         """The actor's name, linking their Needs-you page once that page is published (plain text until then)."""
-        url = markdown.safe_url(self.urls.get(NEEDS_YOU + actor_id)) if actor_id else None
+        url = _page_url(self.urls.get(NEEDS_YOU + actor_id)) if actor_id else None
         return f'<a href="{_e(url)}">{self.who(actor_id)}</a>' if url else self.who(actor_id)
 
     def needs_you(self):
         """Every published Needs-you page, linked by its person's name, by actor id; empty before any."""
         return [self.person(key[len(NEEDS_YOU):]) for key in self.urls
-                if key.startswith(NEEDS_YOU) and markdown.safe_url(self.urls[key])]
+                if key.startswith(NEEDS_YOU) and _page_url(self.urls[key])]
 
     def link(self, item_id, title):
         """The item's title, linking its page once that page is published (plain text until then)."""
-        url = markdown.safe_url(self.urls.get(item_id))
+        url = _page_url(self.urls.get(item_id))
         return f'<a href="{_e(url)}">{_e(title)}</a>' if url else _e(title)
 
     def page_url(self, item_id):
         """The published URL of the item's page, or of its nearest ancestor's when it has none (an ask has
         no page: it shows on the pages above it); None before any of them is published."""
         for link in items.lineage(self.conn, item_id):
-            url = markdown.safe_url(self.urls.get(link["id"]))
+            url = _page_url(self.urls.get(link["id"]))
             if url:
                 return url
         return None

@@ -20,14 +20,14 @@ Every flush starts by marking (Affected pages): under the lock, the journal rows
 minutes after the first mark.
 
 A new page is published with `team` and the tag `trk:<id>`, after its row is set to `publishing`.
-`publish_artifact` is never blindly retried: after an ambiguous failure, and on any later run that
+`publish` is never blindly retried: after an ambiguous failure, and on any later run that
 finds a `publishing` row, the page is looked for by its tag and adopted. An existing page gets one
 write per pass on `baseVersion`: the outermost handles whose shells changed as one patch, or the
 whole body when the root shell changed or the patch would pass 50 edits, with the title when it
 changed. One that renders the same is not written.
 
 Every write carries `baseVersion`. A `conflict` refusal means something else wrote the page: the
-changed handles (and only they) are read with `get_artifact`, and every one whose server source
+changed handles (and only they) are read with `sections`, and every one whose server source
 differs from the render goes again on `currentVersion`, with the refused edits the other writer
 didn't touch. A changed section that isn't the tracker's, or a handle missing on the server, sends
 the whole body instead. That is the one retry per flush: a second conflict fails the page with
@@ -47,7 +47,7 @@ import time
 from contextlib import contextmanager
 from datetime import timedelta
 
-from . import artifacts, clock, items, needs_you, pages, render, renewal, spawn
+from . import clock, items, needs_you, pages, publisher, render, renewal, spawn
 from .errors import refused
 from .store import PUBLISHER
 
@@ -93,7 +93,7 @@ def _flush(st, client, report, *, now_all, only):
     failed, failed_replies = set(), set()
     with pages_lock(st):
         pages.mark(st)
-    report.update(renewal.check(st))
+    report.update(renewal.check(st, client))
     if report["held"]:
         return False  # a 401 holds every page write until setup has a new token
     try:
@@ -210,10 +210,10 @@ def _send(st, client, item_id, *, now_all, failed_replies):
             if items.page_unpublished(page):
                 return _first_publish(st, client, item_id, page, title, html, hashes)
             return _update(st, client, item_id, page, title, html, hashes)
-        except artifacts.Unauthorized as exc:
+        except publisher.Unauthorized as exc:
             _failed(st, item_id, str(exc))
             raise _Stop() from None
-        except artifacts.ServiceError as exc:
+        except publisher.ServiceError as exc:
             _failed(st, item_id, str(exc))
             return FAILED
         except Exception as exc:  # noqa: BLE001 one page's bug must not end the flush with last_error null
@@ -232,7 +232,7 @@ def _render(st, client, item_id, page, failed_replies):
     which this adds to), so a box stays on every page while its reply has just failed."""
     title, html = _snapshot(st, item_id)
     hashes, error = _preflight(html)
-    if error or items.page_unpublished(page) or not _dropped_asks(st.conn, item_id, hashes):
+    if error or items.page_unpublished(page) or not client.COMMENTS or not _dropped_asks(st.conn, item_id, hashes):
         return title, html, hashes, error
     from . import pull  # pull imports this module
 
@@ -277,11 +277,11 @@ def _preflight(html):
         return None, f"render: {exc}"
 
 
-MAX_TITLE = 200  # the artifact service refuses a longer title
+MAX_TITLE = 200  # the longest title a page backend need take
 
 
 def page_title(title):
-    """`title` as the service takes it: at most MAX_TITLE characters, cut at a word boundary with an
+    """`title` as a backend takes it: at most MAX_TITLE characters, cut at a word boundary with an
     ellipsis. The page body keeps the whole title."""
     if len(title) <= MAX_TITLE:
         return title
@@ -318,9 +318,9 @@ def _first_publish(st, client, item_id, page, title, html, hashes):
             return _adopt(st, client, item_id, found, title, html, hashes, known_body=False)
     _set_state(st, item_id, "publishing")
     try:
-        result = client.publish_artifact(title=title, body=html, team=team, tags=[tag(item_id)])
-    except artifacts.ServiceError as exc:
-        if not getattr(exc, "ambiguous", False) or isinstance(exc, artifacts.Unauthorized):
+        result = client.publish(title=title, body=html, team=team, tags=[tag(item_id)])
+    except publisher.ServiceError as exc:
+        if not getattr(exc, "ambiguous", False) or isinstance(exc, publisher.Unauthorized):
             if not was_publishing:  # refused outright, and no earlier attempt may still turn up
                 _set_state(st, item_id, "live")
             raise
@@ -340,7 +340,7 @@ def _adopt(st, client, item_id, found, title, html, hashes, *, known_body):
     body, and the title with it."""
     version = found["version"]
     if not known_body:
-        version = client.update_artifact(found["slug"], base_version=version, body=html, title=title)["version"]
+        version = client.update(found["slug"], base_version=version, body=html, title=title)["version"]
     _published(st, item_id, found["slug"], found["url"], version, hashes, title, created=True)
     return PUBLISHED
 
@@ -368,7 +368,7 @@ def republish(st, client, item_id):
     renewal ask as a flush's would."""
     if renewal.held(st):
         ask = renewal.ensure_ask(st, token_rejected=True)["renewal_ask"]
-        raise refused("republish-failed", f"page writes are held: the artifact service rejected the token; run "
+        raise refused("republish-failed", f"page writes are held: the page backend rejected the token; run "
                                           f"`trk pages setup` with a new one ({ask or 'no renewal ask'})", item=item_id)
     with pages_lock(st):
         page = _row(st.conn, item_id)
@@ -379,12 +379,12 @@ def republish(st, client, item_id):
             title, html, hashes, error = _render(st, client, item_id, page, set())
             if error is None:
                 version = _send_change(client, page, html, pages.WHOLE, title)
-        except artifacts.Unauthorized as exc:
+        except publisher.Unauthorized as exc:
             _failed(st, item_id, str(exc))
             ask = renewal.rejected(st, client)["renewal_ask"]
             raise refused("republish-failed", f"republishing {item_id} failed: {exc}; renewal ask: "
                                               f"{ask or 'none opened'}", item=item_id) from None
-        except artifacts.ServiceError as exc:
+        except publisher.ServiceError as exc:
             error = str(exc)
         if error:
             _failed(st, item_id, error)
@@ -394,13 +394,13 @@ def republish(st, client, item_id):
 
 
 def _send_change(client, page, html, change, title):
-    """One `update_artifact` on the page's stored version: `change` (WHOLE, edits or None) and the title
+    """One `update` on the page's stored version: `change` (WHOLE, edits or None) and the title
     when given; its new version. A conflict (spec: Conflicts) means someone else wrote the page,
     and the change is sent once more on the current version, with only the changed handles read; a
     second conflict fails the page with `last_error: conflict`."""
     try:
         return _update_once(client, page["slug"], page["version"], html, change, title)
-    except artifacts.ToolError as exc:
+    except publisher.Refused as exc:
         if exc.error != "conflict" or not isinstance((exc.payload or {}).get("currentVersion"), int):
             raise
         conflict = exc.payload
@@ -412,19 +412,19 @@ def _send_change(client, page, html, change, title):
             # the whole body puts the page back.
             change = pages.WHOLE
         else:
-            change = pages.resend(parsed, change or [], changed, client.get_artifact(page["slug"], handles=changed))
+            change = pages.resend(parsed, change or [], changed, client.sections(page["slug"], handles=changed))
     if change is None and title is None:
         return current  # the server already holds this render: adopt its version, write nothing
     try:
         return _update_once(client, page["slug"], current, html, change, title)
-    except artifacts.ToolError as exc:
+    except publisher.Refused as exc:
         if exc.error == "conflict":
-            raise artifacts.ServiceError("conflict") from None
+            raise publisher.ServiceError("conflict") from None
         raise
 
 
 def _changed_handles(sections):
-    """The handle ids of a conflict's `changedSections`: the service sends `{id, change}` objects, and an
+    """The handle ids of a conflict's `changedSections`: a backend may send `{id, change}` objects, and an
     entry that is a plain string is already an id."""
     handles = []
     for entry in sections or []:
@@ -436,7 +436,7 @@ def _changed_handles(sections):
 
 def _update_once(client, slug, base_version, html, change, title):
     content = {} if change is None else {"body": html} if change == pages.WHOLE else {"edits": change}
-    return client.update_artifact(slug, base_version=base_version, title=title, **content)["version"]
+    return client.update(slug, base_version=base_version, title=title, **content)["version"]
 
 
 def tag(item_id):

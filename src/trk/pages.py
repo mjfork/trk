@@ -15,28 +15,49 @@ import stat
 import urllib.parse
 from datetime import date, timedelta
 
-from . import artifacts, clock, items, needs_you, render, renewal, spawn
+from . import clock, items, needs_you, publisher, render, renewal, spawn
 from .errors import refused, usage
 from .render import page_kind
 
 DEFAULT_TOKEN_FILE = "~/.config/trk/token"
 TOKEN_ENV = "TRK_ARTIFACT_TOKEN"
+# A store set up before backends were named publishes to the service its base URL names, which the
+# add-on that took over that client registers under this name.
+LEGACY_BACKEND = "artifact-service"
 
 # CLI/feed spelling -> meta key, in the order setup journals them.
-SETTINGS = (("publish-base-url", "publish_base_url"), ("publish-token-file", "publish_token_file"),
+SETTINGS = (("publish-backend", "publish_backend"), ("publish-base-url", "publish_base_url"),
+            ("publish-dir", "publish_dir"), ("publish-token-file", "publish_token_file"),
             ("publish-team", "publish_team"), ("publish-token-expires", "publish_token_expires"),
             ("publish-home", "publish_home"))
 
 
+def backend_name(st):
+    """The configured page backend's name, or None before setup."""
+    return st.meta("publish_backend") or (LEGACY_BACKEND if st.meta("publish_base_url") else None)
+
+
 def is_set_up(st):
-    return bool(st.meta("publish_base_url"))
+    return backend_name(st) is not None
 
 
 def require_set_up(st):
     """flush, pull and tick refuse until setup has run (rule `publishing-not-set-up`)."""
     if not is_set_up(st):
-        raise refused("publishing-not-set-up", "publishing is not set up: run `trk pages setup --base-url URL "
-                                               "--token-file PATH --expires YYYY-MM-DD --home ID` first")
+        raise refused("publishing-not-set-up", "publishing is not set up: run `trk pages setup --backend folder "
+                                               "--dir PATH --home ID` (or another backend) first")
+
+
+def backend_class(name):
+    """The installed backend class `name` (rule `no-backend` when none is)."""
+    try:
+        return publisher.load(name)
+    except LookupError as exc:
+        raise refused("no-backend", str(exc)) from None
+
+
+def _settings(st):
+    return {"base_url": st.meta("publish_base_url"), "dir": st.meta("publish_dir"), "team": st.meta("publish_team")}
 
 
 def token_file_path(raw):
@@ -71,9 +92,10 @@ def read_token(path, *, foreground):
 
 
 def client(st, *, foreground):
-    """A Client for the configured service, holding the token in memory only."""
-    path = token_file_path(st.meta("publish_token_file"))
-    return artifacts.Client(st.meta("publish_base_url"), read_token(path, foreground=foreground))
+    """The configured backend, holding its token (if it takes one) in memory only."""
+    cls = backend_class(backend_name(st))
+    token = read_token(token_file_path(st.meta("publish_token_file")), foreground=foreground) if cls.TOKEN else None
+    return cls(_settings(st), token)
 
 
 def _check_base_url(url):
@@ -82,6 +104,14 @@ def _check_base_url(url):
     local = parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1")
     if not parsed.hostname or not (parsed.scheme == "https" or local):
         raise usage(f"--base-url must be an https URL (http only for localhost), not {url!r}")
+    return url.rstrip("/")
+
+
+def _check_served_url(url):
+    """Where a folder backend's directory is served: an http, https or file URL."""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ("http", "https", "file") or (parsed.scheme != "file" and not parsed.hostname):
+        raise usage(f"--base-url must be an http, https or file URL, not {url!r}")
     return url.rstrip("/")
 
 
@@ -103,45 +133,65 @@ def _check_home(conn, raw_id):
     return row["id"]
 
 
-def setup(st, actor, *, base_url, token_file, expires, home, team):
-    """Configure publishing: check the token file's token live with one `get_publishing_guidance` call (outside
-    any transaction), then store the settings, journaling `config.changed` per changed key. The
+def setup(st, actor, *, backend, base_url, token_file, expires, home, team, folder=None):
+    """Configure publishing: check the backend live with one `check` call (outside any transaction), then
+    store the settings, journaling `config.changed` per changed key. A backend with a token (`TOKEN`)
+    needs `base_url`, `token_file` and `expires`, and is checked with the file's token; the `folder`
+    backend needs `folder`, the directory, and takes `base_url` as where that directory is served. The
     first setup also sets `publish_cursor` to the journal head, because every item is already dirty
     by having no `pages` row; a later setup (a token renewal) keeps the cursor it has, so no row
     waiting to be marked is skipped. The same transaction lifts a 401's hold on page writes and answers
     the open renewal ask (see `renewal.on_setup`). Returns what was configured, the keys that changed
     and what became of the renewal ask."""
-    base_url = _check_base_url(base_url)
-    expires = _check_expires(expires)
+    name = backend or backend_name(st)
+    if not name:
+        raise usage(f"--backend must name a page backend ({', '.join(publisher.names())})")
+    cls = backend_class(name)
     team = st.meta("publish_team") if team is None else team
     if not team or not team.strip():
         raise usage("--team must name the team every page is shared on")
-    path = token_file_path(token_file)
-    token = read_token(path, foreground=False)  # the file the flusher and timer will read, never the override
+    values = {"publish_backend": name, "publish_team": team}
+    if cls.TOKEN:
+        if not base_url or not expires:
+            raise usage(f"the {name} backend needs --base-url, --token-file and --expires")
+        values["publish_base_url"] = _check_base_url(base_url)
+        values["publish_token_expires"] = _check_expires(expires)
+        values["publish_token_file"] = token_file_path(token_file)
+        # the file the flusher and timer will read, never the override
+        token = read_token(values["publish_token_file"], foreground=False)
+    else:
+        if not folder:
+            raise usage(f"the {name} backend needs --dir")
+        values["publish_dir"] = os.path.abspath(os.path.expanduser(folder))
+        if base_url:
+            values["publish_base_url"] = _check_served_url(base_url)
+        token = None
     _check_home(st.conn, home)
+    where = values.get("publish_base_url") or values.get("publish_dir")
     try:
-        artifacts.Client(base_url, token).get_publishing_guidance()
-    except artifacts.ServiceError as exc:
-        raise refused("token-check-failed", f"the token check against {base_url} failed: {exc}") from None
-    values = {"publish_base_url": base_url, "publish_token_file": path, "publish_team": team,
-              "publish_token_expires": expires}
+        cls({"base_url": values.get("publish_base_url"), "dir": values.get("publish_dir"), "team": team}, token).check()
+    except publisher.ServiceError as exc:
+        rule = "token-check-failed" if cls.TOKEN else "backend-check-failed"
+        raise refused(rule, f"the {name} backend's check against {where} failed: {exc}") from None
     changed = []
     with st.transaction(actor) as tx:
         values["publish_home"] = _check_home(tx.conn, home)  # again, under the write lock
-        for name, key in SETTINGS:
+        for spelling, key in SETTINGS:
             old = tx.store.meta(key)
-            if old == values[key]:
+            if key not in values or old == values[key]:
                 continue
             tx.conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) "
                             "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, values[key]))
-            tx.journal("config.changed", {}, data={"key": name, "old": old, "new": values[key]})
-            changed.append(name)
+            tx.journal("config.changed", {}, data={"key": spelling, "old": old, "new": values[key]})
+            changed.append(spelling)
         if tx.store.meta("publish_cursor") is None:
             head = tx.conn.execute("SELECT COALESCE(MAX(seq), 0) FROM journal").fetchone()[0]
             tx.conn.execute("INSERT INTO meta (key, value) VALUES ('publish_cursor', ?)", (str(head),))
-        renewal_ask = renewal.on_setup(tx, actor, expires)
-    return {"base_url": base_url, "token_file": path, "team": team, "expires": expires,
-            "home": values["publish_home"], "changed": changed, "renewal_ask": renewal_ask}
+        renewal_ask = renewal.on_setup(tx, actor, values.get("publish_token_expires"))
+    return {"backend": name, "base_url": values.get("publish_base_url"), "dir": values.get("publish_dir"),
+            "token_file": values.get("publish_token_file"), "team": team,
+            "expires": values.get("publish_token_expires"), "home": values["publish_home"], "changed": changed,
+            "renewal_ask": renewal_ask}
 
 
 def page_rows(conn):
@@ -317,7 +367,7 @@ def patch(html, stored):
 def resend(parsed, sent, changed, read):
     """What to send on the current version after a conflict (spec: Conflicts), given the refused
     edits (`sent`), the conflict's `changedSections` (every one a handle of this render) and the
-    `get_artifact` answer for them: WHOLE when the server misses any of them, None when the server
+    `sections` answer for them: WHOLE when the server misses any of them, None when the server
     already holds this render everywhere it could differ, else the edits. Sent again: every
     changed handle whose server source differs from the render, and every refused edit the other
     writer didn't touch (the server still holds the tracker's last publish there). A handle inside

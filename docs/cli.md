@@ -528,7 +528,7 @@ positional arguments:
   {add,edit,link}
     add            register a person or agent role
     edit           change an actor's display name
-    link           link an actor to an artifact-service author id (page
+    link           link an actor to a page commenter's author id (page
                    comments)
 
 options:
@@ -1179,8 +1179,8 @@ usage: trk pages [-h] [--json] [--dirty] [--errors]
 
 positional arguments:
   {setup,flush,pull,authors,reply,tidy,tick,timer,render,republish}
-    setup               configure publishing and check the token (never stored
-                        or printed)
+    setup               configure publishing and check the backend (a token is
+                        never stored or printed)
     flush               publish due pages
     pull                run the comment pull and the outbox
     authors             author ids seen on page comments and their linked
@@ -1208,18 +1208,23 @@ options:
 
 ```text
 usage: trk pages setup [-h] [--as ACTOR] [--session SESSION] [--json]
-                       --base-url URL [--token-file PATH] --expires YYYY-MM-DD
-                       --home ID [--team SLUG]
+                       [--backend NAME] [--dir PATH] [--base-url URL]
+                       [--token-file PATH] [--expires YYYY-MM-DD] --home ID
+                       [--team SLUG]
 
 options:
   -h, --help            show this help message and exit
   --as ACTOR            writing actor
   --session SESSION     writing session id
   --json                print JSON
-  --base-url URL        the artifact service, https://…
-  --token-file PATH     the `tracker` token, mode 0600 (default
+  --backend NAME        where pages go: folder (built in) or an installed
+                        backend (default: as set)
+  --dir PATH            folder: the directory the pages are written to
+  --base-url URL        a token backend's service, https://…; folder: where
+                        --dir is served (optional)
+  --token-file PATH     a token backend's `tracker` token, mode 0600 (default
                         ~/.config/trk/token)
-  --expires YYYY-MM-DD  the token's expiry date
+  --expires YYYY-MM-DD  a token backend's token expiry date
   --home ID             the open item the publisher's asks sit under
   --team SLUG           the team every page is shared on (default: as set,
                         tracker)

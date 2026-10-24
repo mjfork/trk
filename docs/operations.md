@@ -16,9 +16,24 @@ The store is machine-wide. Every project and session on the machine shares it. N
 
 ## Publishing setup
 
-Publishing is optional. It needs an artifact service: a web service that hosts pages and speaks the MCP protocol. The publisher calls the service's `publish_artifact`, `update_artifact`, `get_artifact`, `list_my_artifacts`, `list_artifact_comments`, `reply_to_artifact_comment` and `list_comment_activity` tools, so the token must be allowed to use them. Both comment reads pass `scope: "all"`: on a connector call the service defaults to `claude`, which returns only comments the page owner sent to Claude and hides every reviewer's answer (tr-8eq14).
+Publishing is optional. trk writes pages through a **page backend**, chosen at setup:
 
-1. **Make a token** in the service, with those grants. Write it to a file that only you can read:
+- **`folder`** (built in) writes each page as an HTML file in a directory. It needs no token, and its pages take no comments, so asks are answered with `trk answer` only.
+- **An installed backend** publishes to a hosted service, where people can comment and a comment on an ask becomes a reply to it. A backend is a Python package that registers itself under the `trk.page_backends` entry-point group; `src/trk/publisher.py` states the interface it implements. A hosted backend usually needs a token.
+
+### The folder backend
+
+```bash
+trk pages setup --backend folder --dir ~/trk-pages --home <open item id>
+```
+
+- `--dir` is where the pages go. Setup creates it.
+- `--base-url` (optional) is where that directory is served, for example `https://intranet.example/trk`. Pages then link to each other by that URL. Without it they link by `file://` path, which works when you open them on this machine.
+- `--home` is an open item. The publisher puts its own asks under it.
+
+### A backend with a token
+
+1. **Make a token** in the service, with the permissions its backend names. Write it to a file that only you can read:
    ```bash
    install -m 600 /dev/null ~/path/to/token
    $EDITOR ~/path/to/token
@@ -26,15 +41,15 @@ Publishing is optional. It needs an artifact service: a web service that hosts p
    trk refuses a token file with looser permissions (rule `token-file-mode`). Never put the token in a ticket, a handoff, a chat or a command line.
 2. **Run setup:**
    ```bash
-   trk pages setup --base-url https://your-service.example --token-file ~/path/to/token \
+   trk pages setup --backend <name> --base-url https://your-service.example --token-file ~/path/to/token \
      --expires 2027-01-31 --home <open item id> --team <team slug>
    ```
    - `--base-url` must be `https`, or `http` to localhost only, because the token goes with every call.
    - `--expires` is the token's last day. The publisher uses it to warn you.
    - `--home` is an open item. The publisher puts its own asks, such as "renew the token", under it.
    - `--team` is the team every page is shared with.
-   - Setup checks the token with one harmless call. It stores the service address, the token file's path, the team, the expiry date and the home item. It never stores or prints the token.
-3. **Start the timer** (next section).
+   - Setup checks the token with one harmless call. It stores the backend's name, the service address, the token file's path, the team, the expiry date and the home item. It never stores or prints the token.
+Then **start the timer** (next section).
 
 Until setup has run, trk publishes nothing, `trk pages` says "not set up", and `trk pages flush`, `pull` and `tick` exit 1.
 
@@ -73,9 +88,9 @@ For the timer to keep running when you are logged out, run `loginctl enable-ling
 
 ### Token expiry
 
-Every flush and pull checks the expiry date. Fourteen days before it, or on any "unauthorized" answer from the service, the publisher opens an ask titled "Mint a new tracker token" under the home item. It is addressed to the `publisher` role. To renew, make a new token, write it to the token file, and run `trk pages setup` again with the new `--expires` date. A successful setup with a date more than 14 days away answers the ask and lets held pages go out.
+This applies to a backend with a token. Every flush and pull checks the expiry date. Fourteen days before it, or on any "unauthorized" answer from the backend, the publisher opens an ask titled "Mint a new tracker token" under the home item. It is addressed to the `publisher` role. To renew, make a new token, write it to the token file, and run `trk pages setup` again with the new `--expires` date. A successful setup with a date more than 14 days away answers the ask and lets held pages go out.
 
-While the service rejects the token, pages stay dirty and the store is unaffected. Nothing is lost.
+While the backend rejects the token, pages stay dirty and the store is unaffected. Nothing is lost.
 
 ### When a page fails
 

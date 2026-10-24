@@ -5,7 +5,7 @@
 See ../build_store.py for how a fixture is built. The store holds what the schema 6 (Needs-you pages)
 migration upgrades: actors michael (default owner), kim (human, holding product) and worker, program P
 with a destination criterion, and an open ask under P to product. Its page tables are empty: a test
-fills them before the first open, since publishing needs an artifact service.
+fills them before the first open, since publishing needs a page backend.
 """
 
 import sys

@@ -1,5 +1,5 @@
 """Needs-you pages (Page publisher spec: Needs-you pages; ticket tr-n77bw): one page per person, everything
-waiting on them across every root, against the in-process fake artifact service. The real service is never
+waiting on them across every root, against the in-process fake page backend. No real backend is ever
 called."""
 
 import json
@@ -8,12 +8,12 @@ import threading
 
 import pytest
 
-from fake_artifacts import TOKEN
+from fake_backend import TOKEN
 from gated import DEST
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_pull import RECEIVED, TABLE, body, confirm, dispositions, mode, pulled, replies, slug  # noqa: F401
 from test_pages_setup import ME, fake, journal, setup_argv, token_file, tree  # noqa: F401 (fixtures)
-from trk import artifacts, needs_you, pull, store
+from trk import needs_you, pull, store
 
 KIM = "needs-you:kim"
 
@@ -94,7 +94,7 @@ def test_ac1_michaels_page_lists_what_waits_on_him_across_roots_in_waiting_order
 def test_ac1_the_page_is_born_shared_with_its_own_tag_and_journals_no_page_created(trk, trk_home, live, fake):
     since = journal(trk_home)[-1]["seq"]
     flush(trk)
-    (published,) = [args for args in fake.tool_calls("publish_artifact") if f"trk:{ME}" in args["tags"]]
+    (published,) = [args for args in fake.tool_calls("publish") if f"trk:{ME}" in args["tags"]]
     assert published["team"] == "tracker" and published["title"] == "Needs you: michael"
     assert [r["item"] for r in journal(trk_home, since) if r["change"] == "page.created"] == \
         [live[k] for k in ("P", "J", "D", "T")]
@@ -150,7 +150,7 @@ def test_ac2_with_comments_on_both_pages_each_is_a_reply_once_and_a_later_one_is
     trk("pages", "tick")
     assert replies(fake, third) == [("Already answered by michael: Metres.", "assistant")]  # the first is his
     assert replies(fake, second)[-1] == ("Ask closed: michael's reply was recorded as the answer.", "assistant")
-    assert len(fake.tool_calls("reply_to_artifact_comment")) == 5  # 2 received, recorded, closed, already answered
+    assert len(fake.tool_calls("reply")) == 5  # 2 received, recorded, closed, already answered
 
 
 def test_ac2_two_ticks_racing_over_both_pages_reply_once_each(trk, trk_home, mode, two_roots, fake, monkeypatch):
@@ -159,16 +159,16 @@ def test_ac2_two_ticks_racing_over_both_pages_reply_once_each(trk, trk_home, mod
     on_me = fake.add_comment(slug(trk_home, ME), f"ask-{a1}", "Metres.", author_id="u-mf")
     on_p = fake.add_comment(slug(trk_home, two_roots["P"]), f"ask-{a1}", "Feet.", author_id="u-kim")
     started, release = threading.Event(), threading.Event()
-    real = fake.__call__
-    reading = b"list_comment_activity" if mode == "activity" else b"list_artifact_comments"
+    real = fake.call
+    reading = "activity" if mode == "activity" else "list_comments"
 
-    def slow(url, headers, raw):
-        if reading in raw and b"tools/call" in raw and not started.is_set():
+    def slow(name, arguments, **kwargs):
+        if name == reading and not started.is_set():
             started.set()
             release.wait(5)  # the first pull holds pages.lock here while the second one starts
-        return real(url, headers, raw)
+        return real(name, arguments, **kwargs)
 
-    monkeypatch.setattr(artifacts, "urllib_transport", slow)
+    monkeypatch.setattr(fake, "call", slow)
     monkeypatch.setenv("TRK_ARTIFACT_TOKEN", TOKEN)
     reports, errors = [], []
 
@@ -293,7 +293,7 @@ def test_ac4_an_empty_page_says_nothing_waits_and_stays_published(trk, trk_home,
 def test_a_write_no_person_page_shows_marks_none_of_them(trk, trk_home, two_roots, fake, body):
     ok(trk, "section", "set", two_roots["T"], "what-to-build", "--file", body("Changed.\n")[1:])
     flush(trk)
-    sent = {args["slug"] for args in fake.tool_calls("update_artifact")}
+    sent = {args["slug"] for args in fake.tool_calls("update")}
     assert slug(trk_home, two_roots["T"]) in sent and not sent & {slug(trk_home, ME), slug(trk_home, KIM)}
     conn = db(trk_home)
     try:  # not even marked: rendering them would have found nothing to send
@@ -329,7 +329,7 @@ def test_a_first_publish_links_the_pages_own_ask_boxes(trk, trk_home, two_roots,
     assert f'href="{page_row(trk_home, q)["url"]}"' in boxes[slug(trk_home, q)]
     assert len(set(boxes.values())) == 1, boxes
     report = flush(trk)
-    assert (report["published"], report["updated"]) == ([], []) and fake.tool_calls("update_artifact") == []
+    assert (report["published"], report["updated"]) == ([], []) and fake.tool_calls("update") == []
 
 
 # ----- tr-p9mpr: the pages that show a person's asks link their Needs-you page --------------------------
@@ -350,7 +350,7 @@ def test_every_waiting_box_links_its_addressees_needs_you_page(trk, trk_home, tw
                    if f'data-comment-id="ask-{two_roots[ask]}"' in fake.body(s)]
         assert len(showing) >= 2 and len({box(fake.body(s), two_roots[ask]) for s in showing}) == 1, ask
     report = flush(trk)
-    assert (report["published"], report["updated"]) == ([], []) and fake.tool_calls("update_artifact") == []
+    assert (report["published"], report["updated"]) == ([], []) and fake.tool_calls("update") == []
 
 
 def test_an_addressee_without_a_published_page_is_plain_text(trk, live, body):
@@ -384,10 +384,10 @@ def test_a_needs_you_pages_first_publish_marks_the_pages_that_link_it(trk, trk_h
     eve = page_row(trk_home, "needs-you:eve")["url"]
     assert eve and f'<a href="{eve}">eve</a>' in page(fake, trk_home, p)
     assert handles_on(page(fake, trk_home, p)) == before
-    sent = [args for args in fake.tool_calls("update_artifact") if args["slug"] == slug(trk_home, p)]
+    sent = [args for args in fake.tool_calls("update") if args["slug"] == slug(trk_home, p)]
     assert [[edit["section"] for edit in args["edits"]] for args in sent] == [["header"]]
     assert box(page(fake, trk_home, r), a5) == box(page(fake, trk_home, "needs-you:eve"), a5)
     assert f'parent (<a href="{eve}">eve</a>)' in box(page(fake, trk_home, r), a5)
     fake.calls.clear()
     report = flush(trk)
-    assert (report["published"], report["updated"]) == ([], []) and fake.tool_calls("update_artifact") == []
+    assert (report["published"], report["updated"]) == ([], []) and fake.tool_calls("update") == []

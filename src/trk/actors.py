@@ -56,12 +56,12 @@ def edit(tx, actor_id, display):
 
 
 def link(tx, actor_id, service_user):
-    """Link an actor to an artifact-service author id (`trk actor link`), moving the id off any actor that
+    """Link an actor to a page commenter's author id (`trk actor link`), moving the id off any actor that
     held it. Journals `actor.updated` with `fields: ["service_user"]` for each actor whose link changed;
     the id itself stays internal, as the actors JSON does. Linking the holder again writes nothing."""
     service_user = service_user.strip()
     if not service_user or any(ch.isspace() for ch in service_user):
-        raise usage("--service-user takes the author id the artifact service shows, one word")
+        raise usage("--service-user takes the author id the page backend shows, one word")
     conn = tx.conn
     row = get(conn, actor_id)
     if row["service_user_id"] == service_user:

@@ -1,5 +1,5 @@
 """A person's page comment outside an ask box is routed to the item's owner (tr-yd424, Page publisher spec,
-Comments as answers) and an agent answers or acknowledges it. Against the in-process fake artifact service."""
+Comments as answers) and an agent answers or acknowledges it. Against the in-process fake page backend."""
 
 import json
 
@@ -154,5 +154,5 @@ def test_a_thread_already_resolved_or_replied_to_is_ignored_not_routed(trk, trk_
         fake._event("status", fake.comments[c], "2026-10-11T12:30:00.000Z", status="resolved")
     pulled(trk)
     assert dispositions(trk_home)[c] == ("ignored", None) and outbox(trk_home) == []
-    assert routed_rows(trk_home, since) == [] and fake.tool_calls("reply_to_artifact_comment") == []
+    assert routed_rows(trk_home, since) == [] and fake.tool_calls("reply") == []
     assert item(trk, asked["D"])["comments"] == []

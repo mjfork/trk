@@ -6,8 +6,8 @@
 #   ./install.sh make-bundle [--all-branches] [FILE]
 #
 # See `./install.sh --help`, README.md and docs/install.md. This script never reads, prints or
-# stores a token: publishing is set up afterwards with `trk pages setup`, which reads a token
-# file (mode 0600) that you name with --token-file.
+# stores a token: publishing is set up afterwards with `trk pages setup`, which for a backend
+# with a token reads a token file (mode 0600) that you name with --token-file.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
@@ -253,7 +253,7 @@ next_steps() {
    `trk roles set <role> <actor>`.
    Then read docs/agents.md.
 3. Restart Claude Code so it loads the new skills and hooks.
-4. Optional, publishing pages: run `trk pages setup --help`. It reads a token file (mode 0600) named with --token-file; this script never sees it.
+4. Optional, publishing pages: run `trk pages setup --help`. The built-in folder backend needs no token; a backend that publishes to a service reads a token file (mode 0600) named with --token-file, which this script never sees.
    Then run ./install.sh --pages for the timer. See docs/operations.md.
 5. Try the quickstart in README.md.
 EOF

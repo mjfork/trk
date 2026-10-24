@@ -1,5 +1,5 @@
 """Affected pages, diffing and debounce (Page publisher spec: Affected pages, Timing, Recording marks,
-Diffing and patching, RENDER_VERSION), against the in-process fake artifact service. The real
+Diffing and patching, RENDER_VERSION), against the in-process fake page backend. The real
 service is never called."""
 
 import re
@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from fake_artifacts import handles_in
+from fake_backend import handles_in
 from gated import section_file, ticket
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_setup import ME, fake, journal, meta, token_file, tree  # noqa: F401 (fixtures)
@@ -34,7 +34,7 @@ def quiet_flush(trk):
 
 
 def writes_to(fake, slug):
-    return [args for args in fake.tool_calls("update_artifact") if args["slug"] == slug]
+    return [args for args in fake.tool_calls("update") if args["slug"] == slug]
 
 
 def edited(args):
@@ -106,7 +106,7 @@ def test_twenty_writes_within_a_minute_are_one_patch_of_only_the_changed_handles
     (write,) = writes_to(fake, t["slug"])
     after = pages.hashes(render.render(db(trk_home), t["id"]))
     changed = {handle for handle in after if after[handle] != before.get(handle)}
-    assert "body" not in write and "title" not in write and write["baseVersion"] == 1
+    assert "body" not in write and "title" not in write and write["base_version"] == 1
     assert set(edited(write)) <= changed and "what-to-build" in edited(write)
     assert fake.body(t["slug"]) == render.render(db(trk_home), t["id"])
     assert page_row(trk_home, t["id"])["version"] == 2
@@ -122,7 +122,7 @@ def test_claim_renew_marks_no_page(trk, trk_home, published, fake, monkeypatch):
     assert [row["change"] for row in journal(trk_home, seq)] == ["claim.renewed"]
     fake.calls.clear()
     quiet_flush(trk)
-    assert dirty(trk_home) == set() and fake.tool_calls("update_artifact") == []
+    assert dirty(trk_home) == set() and fake.tool_calls("update") == []
     assert meta(trk_home, "publish_cursor") == str(journal(trk_home)[-1]["seq"])
 
 
@@ -205,12 +205,12 @@ def test_a_failed_page_waits_five_minutes_from_its_failure(trk, trk_home, publis
     t = published["T"]
     at(monkeypatch, "2026-10-11T09:10:00Z")
     ok(trk, "section", "set", t["id"], "what-to-build", "--file", str(section_file("w", "Build.\n")))
-    fake.grants.discard("update_artifact")
+    fake.grants.discard("update")
     at(monkeypatch, "2026-10-11T09:11:00Z")
     report = quiet_flush(trk)
     assert t["id"] in report["failed"]
     assert page_row(trk_home, t["id"])["last_error_at"] == "2026-10-11T09:11:00.000Z"
-    fake.grants.add("update_artifact")
+    fake.grants.add("update")
     fake.calls.clear()
     at(monkeypatch, "2026-10-11T09:15:59Z")  # past the first mark's 5-minute cap, but not 5 min after the failure
     quiet_flush(trk)
@@ -226,7 +226,7 @@ def test_now_sends_a_marked_page_at_once_and_item_limits_it(trk, trk_home, publi
     at(monkeypatch, "2026-10-11T09:05:00Z")
     ok(trk, "section", "set", published["T"]["id"], "what-to-build", "--file", str(section_file("w", "Now.\n")))
     flush(trk, "--item", published["T"]["id"])
-    assert [args["slug"] for args in fake.tool_calls("update_artifact")] == [published["T"]["slug"]]
+    assert [args["slug"] for args in fake.tool_calls("update")] == [published["T"]["slug"]]
     assert dirty(trk_home) == {published["J"]["id"], published["P"]["id"]}  # the rest still wait their minute
 
 
@@ -234,10 +234,10 @@ def test_now_with_item_sends_a_failed_page_without_waiting(trk, trk_home, publis
     t = published["T"]
     at(monkeypatch, "2026-10-11T09:10:00Z")
     ok(trk, "section", "set", t["id"], "what-to-build", "--file", str(section_file("w", "Build.\n")))
-    fake.grants.discard("update_artifact")
+    fake.grants.discard("update")
     flush(trk, "--item", t["id"])
     assert page_row(trk_home, t["id"])["last_error"]
-    fake.grants.add("update_artifact")
+    fake.grants.add("update")
     fake.calls.clear()
     flush(trk, "--item", t["id"])  # the same minute: --now ignores the pause after a failure
     assert len(writes_to(fake, t["slug"])) == 1 and page_row(trk_home, t["id"])["last_error"] is None
@@ -281,7 +281,7 @@ def test_a_render_version_bump_republishes_every_page_once(trk, trk_home, ten, f
     assert meta(trk_home, "render_version") == str(render.RENDER_VERSION)
     fake.calls.clear()
     flush(trk)
-    assert fake.tool_calls("update_artifact") == []
+    assert fake.tool_calls("update") == []
 
 
 def test_more_than_fifty_edits_send_the_whole_body():

@@ -453,7 +453,7 @@ def test_claim_renew_imports_none_of_the_page_modules(trk, world):
                           capture_output=True, text=True, env=env, check=True)
     loaded = json.loads(done.stdout.strip().splitlines()[-1].replace("'", '"'))
     assert "trk.cli" in loaded
-    assert not {"trk.render", "trk.markdown", "trk.pages", "trk.artifacts", "trk.flusher",
+    assert not {"trk.render", "trk.markdown", "trk.pages", "trk.publisher", "trk.folder", "trk.flusher",
                  "trk.renewal", "trk.timer"} & set(loaded)
 
 

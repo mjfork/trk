@@ -1,5 +1,5 @@
 """`trk pages setup` and `trk pages` (Page publisher spec: Setup, token and privacy; Reads and verbs),
-against the in-process fake artifact service. The real service is never called."""
+against the in-process fake page backend. No real backend is ever called."""
 
 import json
 import os
@@ -7,20 +7,19 @@ import sqlite3
 
 import pytest
 
-from fake_artifacts import BASE_URL, TOKEN, FakeArtifactService
+from fake_backend import BASE_URL, TOKEN, FakeBackend
 from gated import DEST, section_file, ticket
-from trk import artifacts, pages
+from trk import pages, publisher
 
 EXPIRES = "2027-10-01"
 
 
 @pytest.fixture
 def fake(monkeypatch):
-    """The fake service behind every Client the CLI builds; backoff sleeps are recorded, not slept."""
-    service = FakeArtifactService()
-    monkeypatch.setattr(artifacts, "urllib_transport", service)
-    service.sleeps = []
-    monkeypatch.setattr(artifacts, "_sleep", service.sleeps.append)
+    """The fake backend, registered as `fake`, behind every client the CLI builds; backoff sleeps are
+    recorded, not slept."""
+    service = FakeBackend()
+    monkeypatch.setitem(publisher.BUILTIN, "fake", service)
     monkeypatch.delenv("TRK_ARTIFACT_TOKEN", raising=False)
     return service
 
@@ -58,7 +57,7 @@ ME = "needs-you:michael"  # the default owner's Needs-you page, which every publ
 
 
 def setup_argv(token_file, home, *extra):
-    return ("pages", "setup", "--base-url", BASE_URL, "--token-file", str(token_file), "--expires", EXPIRES,
+    return ("pages", "setup", "--backend", "fake", "--base-url", BASE_URL, "--token-file", str(token_file), "--expires", EXPIRES,
             "--home", home, *extra)
 
 
@@ -118,8 +117,9 @@ def test_a_valid_setup_journals_one_config_row_per_key(trk, trk_home, tree, fake
     result = trk(*setup_argv(token_file, tree["P"]))
     assert result.code == 0, result.err
     rows = journal(trk_home, before)
-    assert [row["change"] for row in rows] == ["config.changed"] * 4
+    assert [row["change"] for row in rows] == ["config.changed"] * 5
     assert [json.loads(row["data"]) for row in rows] == [
+        {"key": "publish-backend", "old": None, "new": "fake"},
         {"key": "publish-base-url", "old": None, "new": BASE_URL},
         {"key": "publish-token-file", "old": None, "new": str(token_file)},
         {"key": "publish-token-expires", "old": None, "new": EXPIRES},
@@ -136,7 +136,7 @@ def test_a_new_team_is_journaled_and_rerunning_setup_unchanged_journals_nothing(
     before = head(trk_home)
     assert trk(*setup_argv(token_file, tree["P"], "--team", "scratch")).code == 0
     assert head(trk_home) == before
-    assert len(fake.tool_calls("get_publishing_guidance")) == 2  # the token is checked every time
+    assert len(fake.tool_calls("check")) == 2  # the token is checked every time
 
 
 def test_the_secret_appears_in_no_output_and_nowhere_in_the_store(trk, trk_home, tree, fake, token_file):
@@ -162,7 +162,7 @@ def test_the_secret_appears_in_no_output_and_nowhere_in_the_store(trk, trk_home,
 
 def test_setup_checks_the_token_with_one_guidance_call(trk, tree, fake, token_file):
     assert trk(*setup_argv(token_file, tree["P"])).code == 0
-    assert fake.calls == [("get_publishing_guidance", {})]
+    assert fake.calls == [("check", {})]
 
 
 def test_a_failed_token_check_exits_1_and_stores_nothing(trk, trk_home, tree, fake, token_file):
@@ -179,7 +179,7 @@ def test_a_failed_token_check_exits_1_and_stores_nothing(trk, trk_home, tree, fa
 
 
 def test_an_unreachable_service_fails_the_check_after_its_retries(trk, tree, fake, token_file):
-    fake.fail_next("502", tool="get_publishing_guidance", times=4)
+    fake.fail_next("502", tool="check", times=4)
     result = trk(*setup_argv(token_file, tree["P"]), "--json")
     assert result.code == 1
     assert result.error()["rule"] == "token-check-failed"
@@ -223,7 +223,7 @@ def test_rerunning_setup_keeps_the_cursor_it_already_has(trk, trk_home, tree, fa
 ])
 def test_bad_setup_values_are_usage_errors(trk, tree, fake, token_file, argv, message):
     flags = dict(zip(argv[::2], argv[1::2]))
-    full = {"--base-url": BASE_URL, "--token-file": str(token_file), "--expires": EXPIRES, "--home": tree["P"], **flags}
+    full = {"--backend": "fake", "--base-url": BASE_URL, "--token-file": str(token_file), "--expires": EXPIRES, "--home": tree["P"], **flags}
     result = trk("pages", "setup", *[part for pair in full.items() for part in pair])
     assert result.code == 2
     assert message in result.err
@@ -291,8 +291,8 @@ def test_pages_shows_the_bookkeeping_and_filters_dirty_and_errors(trk, trk_home,
         conn.execute("INSERT INTO pages (item_id, slug, url, version, state, published_at, due_at, first_dirty_at,"
                      " last_error, last_error_at) VALUES (?, ?, ?, ?, 'live', ?, ?, ?, ?, ?)",
                      (tree["J"], "fake-0002", f"{BASE_URL}/artifacts/fake-0002", 1, "2026-10-11T09:10:00.000Z",
-                      "2026-10-11T09:12:00.000Z", "2026-10-11T09:11:00.000Z", "update_artifact: tool_not_allowed "
-                      "(update_artifact)", "2026-10-11T09:12:00.000Z"))
+                      "2026-10-11T09:12:00.000Z", "2026-10-11T09:11:00.000Z", "update: tool_not_allowed "
+                      "(update)", "2026-10-11T09:12:00.000Z"))
     conn.close()
     rows = {row["item"]: row for row in trk("pages", "--json").json()["pages"]}
     assert rows[tree["P"]] == {"item": tree["P"], "kind": "program", "title": "P", "slug": "fake-0001",
@@ -308,7 +308,7 @@ def test_pages_shows_the_bookkeeping_and_filters_dirty_and_errors(trk, trk_home,
     text = trk("pages").out
     assert "fake-0001" in text and "v3" in text and f"{BASE_URL}/artifacts/fake-0001" in text
     assert "2026-10-11T09:10:00.000Z" in text
-    assert "tool_not_allowed (update_artifact)" in text
+    assert "tool_not_allowed (update)" in text
     lines = text.strip().splitlines()
     assert len(lines) == 5 and lines[4].startswith(ME)
     assert lines[0].startswith(tree["P"])
@@ -331,14 +331,15 @@ def test_pull_after_setup_with_no_page_published_reads_nothing(trk, tree, fake, 
     assert trk(*setup_argv(token_file, tree["P"])).code == 0
     result = trk("pages", "pull", "--json")
     assert result.code == 0, result.err
-    assert result.json()["comments"] == [] and fake.tool_calls("list_artifact_comments") == []
+    assert result.json()["comments"] == [] and fake.tool_calls("list_comments") == []
 
 
 def test_setup_prints_what_it_configured_without_the_secret(trk, tree, fake, token_file):
     result = trk(*setup_argv(token_file, tree["P"]), "--json")
-    assert result.json() == {"schema": 1, "base_url": BASE_URL, "token_file": str(token_file), "team": "tracker",
-                             "expires": EXPIRES, "home": tree["P"], "changed": ["publish-base-url",
-                             "publish-token-file", "publish-token-expires", "publish-home"],
+    assert result.json() == {"schema": 1, "backend": "fake", "base_url": BASE_URL, "dir": None,
+                             "token_file": str(token_file), "team": "tracker", "expires": EXPIRES, "home": tree["P"],
+                             "changed": ["publish-backend", "publish-base-url", "publish-token-file",
+                                         "publish-token-expires", "publish-home"],
                              "renewal_ask": None}
     text = trk(*setup_argv(token_file, tree["P"])).out
     assert "tracker" in text and BASE_URL in text

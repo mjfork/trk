@@ -1,6 +1,6 @@
 """First publish: `trk pages flush --now` (Page publisher spec: First publish, Size, Amendments to Core's
 item JSON `page` field, the `publishing` state and recovery by tag), against the in-process fake
-artifact service. The real service is never called."""
+page backend. No real backend is ever called."""
 
 import json
 import re
@@ -8,9 +8,9 @@ import sqlite3
 
 import pytest
 
-from fake_artifacts import MAX_BODY_BYTES
+from fake_backend import MAX_BODY_BYTES
 from test_pages_setup import ME, fake, journal, setup_argv, token_file, tree  # noqa: F401 (fixtures)
-from trk import artifacts, render, store
+from trk import render, store
 
 
 @pytest.fixture
@@ -57,9 +57,9 @@ def hrefs(body):
 def test_one_flush_publishes_every_page_top_down_shared_on_the_team(trk, trk_home, live, fake):
     since = journal(trk_home)[-1]["seq"]
     flush(trk)
-    published = fake.tool_calls("publish_artifact")
+    published = fake.tool_calls("publish")
     assert [tag_of(args) for args in published] == [f"trk:{live[k]}" for k in ("P", "J", "D", "T")] + [f"trk:{ME}"]
-    assert all(args["team"] == "tracker" and args["contentType"] == "html" for args in published)
+    assert all(args["team"] == "tracker" for args in published)
     assert all(args["tags"] == [tag_of(args)] for args in published)
     created = [row for row in journal(trk_home, since) if row["change"] == "page.created"]
     assert [row["item"] for row in created] == [live[k] for k in ("P", "J", "D", "T")]
@@ -76,7 +76,7 @@ def test_the_same_run_patches_the_parents_so_every_link_resolves(trk, trk_home, 
     slugs = {key: page_row(trk_home, live[key])["slug"] for key in live}
     # P and J were patched once their children existed; D and T were born linked to their ancestors.
     assert {key: len(fake.artifacts[slugs[key]]["versions"]) for key in live} == {"P": 2, "J": 2, "D": 1, "T": 1}
-    assert all("team" not in args for args in fake.tool_calls("update_artifact"))
+    assert all("team" not in args for args in fake.tool_calls("update"))
     urls["me"] = page_row(trk_home, ME)["url"]  # the top-level page links michael's Needs-you page
     every_url = set(urls.values())
     for key, children in (("P", ["J", "me"]), ("J", ["D", "T"]), ("D", ["P", "J"]), ("T", ["P", "J"])):
@@ -96,7 +96,7 @@ def test_show_carries_the_page_and_a_second_flush_writes_nothing(trk, trk_home, 
     fake.calls.clear()
     head = journal(trk_home)[-1]["seq"]
     again = flush(trk)
-    assert fake.tool_calls("publish_artifact") == [] and fake.tool_calls("update_artifact") == []
+    assert fake.tool_calls("publish") == [] and fake.tool_calls("update") == []
     assert journal(trk_home)[-1]["seq"] == head
     assert again["published"] == [] and again["updated"] == []
 
@@ -111,14 +111,14 @@ def test_flush_reports_what_it_did(trk, live, fake):
 
 def test_item_flag_limits_the_flush(trk, trk_home, live, fake):
     flush(trk, "--item", live["P"])
-    assert [tag_of(args) for args in fake.tool_calls("publish_artifact")] == [f"trk:{live['P']}"]
+    assert [tag_of(args) for args in fake.tool_calls("publish")] == [f"trk:{live['P']}"]
     assert page_row(trk_home, live["J"]) is None
 
 
 def test_flush_without_now_publishes_new_pages(trk, trk_home, live, fake):
     result = trk("pages", "flush")
     assert result.code == 0, result.err
-    assert len(fake.tool_calls("publish_artifact")) == 5  # four items and michael's Needs-you page
+    assert len(fake.tool_calls("publish")) == 5  # four items and michael's Needs-you page
 
 
 def test_flush_wait_refuses_now(trk, live, fake):
@@ -169,11 +169,11 @@ def test_a_dirty_page_says_so_in_item_json(trk, trk_home, live, fake):
 
 
 def test_a_502_after_the_publish_was_applied_adopts_the_page_by_its_tag(trk, trk_home, live, fake):
-    fake.fail_next("502-after", tool="publish_artifact")
+    fake.fail_next("502-after", tool="publish")
     report = flush(trk)
     tags = [tag for art in fake.artifacts.values() for tag in art["tags"]]
     assert sorted(tags) == sorted([f"trk:{live[k]}" for k in live] + [f"trk:{ME}"])  # one page each, no duplicate
-    assert len(fake.tool_calls("list_my_artifacts")) >= 1
+    assert len(fake.tool_calls("find_tagged")) >= 1
     row = page_row(trk_home, live["P"])
     assert row["state"] == "live" and row["slug"] in fake.artifacts
     assert fake.artifacts[row["slug"]]["tags"] == [f"trk:{live['P']}"]
@@ -186,8 +186,8 @@ def test_a_502_after_the_publish_was_applied_adopts_the_page_by_its_tag(trk, trk
 def test_a_later_run_that_finds_a_publishing_row_recovers_the_page(trk, trk_home, live, fake):
     # The first run's publish reached the origin but the run died before its bookkeeping; the
     # tracker only knows it had started (state publishing, no slug).
-    fake.fail_next("connection", tool="list_my_artifacts", times=99)
-    fake.fail_next("502-after", tool="publish_artifact")
+    fake.fail_next("connection", tool="find_tagged", times=99)
+    fake.fail_next("502-after", tool="publish")
     flush(trk, "--item", live["P"])
     row = page_row(trk_home, live["P"])
     assert row["state"] == "publishing" and row["slug"] is None and row["last_error"]
@@ -195,18 +195,18 @@ def test_a_later_run_that_finds_a_publishing_row_recovers_the_page(trk, trk_home
     fake.faults.clear()
     fake.calls.clear()
     flush(trk, "--item", live["P"])
-    assert fake.tool_calls("publish_artifact") == []
+    assert fake.tool_calls("publish") == []
     (slug,) = fake.artifacts
     row = page_row(trk_home, live["P"])
     assert (row["slug"], row["state"], row["last_error"]) == (slug, "live", None)
     # A page found by its tag from an earlier run may hold an older render, so it gets the whole body.
-    (update,) = fake.tool_calls("update_artifact")
-    assert update["body"] == render.render(db(trk_home), live["P"]) and update["baseVersion"] == 1
+    (update,) = fake.tool_calls("update")
+    assert update["body"] == render.render(db(trk_home), live["P"]) and update["base_version"] == 1
     assert [r["item"] for r in journal(trk_home) if r["change"] == "page.created"] == [live["P"]]
 
 
 def test_a_publishing_row_whose_page_never_arrived_is_published_again(trk, trk_home, live, fake):
-    fake.fail_next("502", tool="publish_artifact")  # the edge refused before the origin saw it
+    fake.fail_next("502", tool="publish")  # the edge refused before the origin saw it
     flush(trk, "--item", live["P"])
     assert page_row(trk_home, live["P"])["state"] == "publishing"
     assert fake.artifacts == {}
@@ -216,10 +216,10 @@ def test_a_publishing_row_whose_page_never_arrived_is_published_again(trk, trk_h
 
 
 def test_a_refused_publish_after_an_unfinished_one_keeps_the_row_publishing(trk, trk_home, live, fake):
-    fake.fail_next("502", tool="publish_artifact")
+    fake.fail_next("502", tool="publish")
     flush(trk, "--item", live["P"])
     assert page_row(trk_home, live["P"])["state"] == "publishing"
-    fake.fail_next("500", tool="publish_artifact")  # not one the edge retries, but still a 5xx: ambiguous
+    fake.fail_next("500", tool="publish")  # not one the edge retries, but still a 5xx: ambiguous
     fake.teams.clear()  # this time the origin refuses outright
     flush(trk, "--item", live["P"])
     row = page_row(trk_home, live["P"])
@@ -233,22 +233,22 @@ def test_a_refused_publish_after_an_unfinished_one_keeps_the_row_publishing(trk,
 def test_a_late_page_from_an_earlier_attempt_gets_the_whole_body(trk, trk_home, live, fake):
     # The first attempt's page reaches the origin, but the tag lookup misses it (an edge 502 on the
     # listing every time); the next run's lookup misses it too, and its own publish is ambiguous.
-    fake.fail_next("connection", tool="list_my_artifacts", times=8)
-    fake.fail_next("502-after", tool="publish_artifact")
+    fake.fail_next("connection", tool="find_tagged", times=8)
+    fake.fail_next("502-after", tool="publish")
     flush(trk, "--item", live["P"])
     assert page_row(trk_home, live["P"])["state"] == "publishing" and len(fake.artifacts) == 1
     fake.faults.clear()
     (slug,) = fake.artifacts
     fake.artifacts[slug]["versions"] = ["<p>an older render</p>"]
     flush(trk, "--item", live["P"])
-    assert fake.tool_calls("publish_artifact")[1:] == []  # found by its tag, so never published twice
+    assert fake.tool_calls("publish")[1:] == []  # found by its tag, so never published twice
     assert fake.body(slug) == render.render(db(trk_home), live["P"])
 
 
 def test_a_refused_publish_is_recorded_and_the_others_go_on(trk, trk_home, live, fake):
     fake.teams.clear()  # the token's user is in no team called tracker: a tool error, never ambiguous
     report = flush(trk)
-    assert fake.tool_calls("list_my_artifacts") == []
+    assert fake.tool_calls("find_tagged") == []
     row = page_row(trk_home, live["P"])
     assert row["slug"] is None and row["state"] == "live" and "unknown_team" in row["last_error"]
     assert sorted(report["failed"]) == sorted([*live.values(), ME])
@@ -270,16 +270,18 @@ def test_no_network_call_happens_inside_a_sqlite_transaction(trk, live, fake, mo
     monkeypatch.setattr(store, "_connect", tracking)
     seen = []
 
-    def guarded(url, headers, body):
-        open_tx = [conn for conn in connections if _in_transaction(conn)]
-        seen.append(json.loads(body).get("method"))
-        assert open_tx == [], "a network call ran inside a SQLite transaction"
-        return fake(url, headers, body)
+    real = fake.call
 
-    monkeypatch.setattr(artifacts, "urllib_transport", guarded)
-    fake.fail_next("502-after", tool="publish_artifact")
+    def guarded(name, arguments, **kwargs):
+        open_tx = [conn for conn in connections if _in_transaction(conn)]
+        seen.append(name)
+        assert open_tx == [], "a backend call ran inside a SQLite transaction"
+        return real(name, arguments, **kwargs)
+
+    monkeypatch.setattr(fake, "call", guarded)
+    fake.fail_next("502-after", tool="publish")
     flush(trk)
-    assert seen.count("tools/call") >= 7 and connections
+    assert len(seen) >= 7 and connections
 
 
 def _in_transaction(conn):
@@ -298,7 +300,7 @@ def test_a_new_page_is_never_published_while_the_team_is_unset(trk, trk_home, li
         conn.execute("UPDATE meta SET value = '' WHERE key = 'publish_team'")
     conn.close()
     report = flush(trk)
-    assert fake.tool_calls("publish_artifact") == []
+    assert fake.tool_calls("publish") == []
     assert sorted(report["failed"]) == sorted([*live.values(), ME])
     assert "team" in page_row(trk_home, live["P"])["last_error"]
 
@@ -313,7 +315,7 @@ def test_a_page_over_two_mib_is_never_sent(trk, trk_home, live, fake):
         big = section_file(f"notes-{n}", "x" * (250 * 1024))
         assert trk("section", "set", live["T"], f"notes-{n}", "--file", str(big)).code == 0
     report = flush(trk)
-    assert f"trk:{live['T']}" not in [tag_of(args) for args in fake.tool_calls("publish_artifact")]
+    assert f"trk:{live['T']}" not in [tag_of(args) for args in fake.tool_calls("publish")]
     row = page_row(trk_home, live["T"])
     assert row["last_error"] == "too-large" and row["slug"] is None
     assert live["T"] in report["failed"]
@@ -327,8 +329,9 @@ def test_flush_takes_the_pages_lock_for_each_page(trk, trk_home, live, fake, mon
     import fcntl
 
     held = []
+    real = fake.call
 
-    def probing(url, headers, body):
+    def probing(name, arguments, **kwargs):
         with open(trk_home / "pages.lock", "a+") as f:
             try:
                 fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -337,9 +340,9 @@ def test_flush_takes_the_pages_lock_for_each_page(trk, trk_home, live, fake, mon
             else:
                 fcntl.flock(f, fcntl.LOCK_UN)
                 held.append(False)
-        return fake(url, headers, body)
+        return real(name, arguments, **kwargs)
 
-    monkeypatch.setattr(artifacts, "urllib_transport", probing)
+    monkeypatch.setattr(fake, "call", probing)
     flush(trk)
     assert held and all(held)
 

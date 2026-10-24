@@ -1,16 +1,16 @@
 """Comments as answers: `trk pages pull`, the pull half of `trk pages tick`, `trk actor link` and
 `trk pages authors` (Page publisher spec: Comments as answers; AC 6 and AC 7), against the in-process
-fake artifact service. The real service is never called."""
+fake page backend. No real backend is ever called."""
 
 import json
 import threading
 
 import pytest
 
-from fake_artifacts import ACTIVITY, TOKEN
+from fake_backend import ACTIVITY, TOKEN
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_setup import fake, journal, meta, setup_argv, token_file, tree  # noqa: F401 (fixtures)
-from trk import artifacts, pull, store
+from trk import pull, store
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ def actor_row(trk_home, actor_id):
 @pytest.fixture(params=["pages", "activity"])
 def mode(request, trk, trk_home, live, fake, monkeypatch):
     """The disposition table runs twice: listing page by page, and reading the cross-page activity log
-    (service change 2). In activity mode the first pull seeds `comment_cursor` before the test writes any
+    (when the backend offers it). In activity mode the first pull seeds `comment_cursor` before the test writes any
     comment, and the per-page read is never used again."""
     if request.param == "activity":
         fake.activity = True
@@ -181,7 +181,7 @@ def test_a_second_pull_acts_on_nothing_again(trk, trk_home, asked, fake):
     again = pulled(trk)
     assert again["comments"] == [] and again["replies"]["sent"] == []
     assert len(fake.comments[first]["replies"]) == 1
-    assert len(fake.tool_calls("reply_to_artifact_comment")) == 1
+    assert len(fake.tool_calls("reply")) == 1
 
 
 # ----- tr-jmmjh: the tracker replies and never resolves a person's thread ------------------------------
@@ -189,9 +189,9 @@ def test_a_second_pull_acts_on_nothing_again(trk, trk_home, asked, fake):
 
 def never_resolved(fake):
     """No reply the tracker sent asked to resolve its thread, but a closing reply (Pub 17), and no other call did."""
-    return (all(call["resolve"] is False for call in fake.tool_calls("reply_to_artifact_comment")
+    return (all(call["resolve"] is False for call in fake.tool_calls("reply")
                 if not call["body"].startswith("Closed: "))
-            and not fake.tool_calls("resolve_artifact_comment"))
+            and not fake.tool_calls("resolve_comment"))
 
 
 @TABLE
@@ -375,7 +375,7 @@ def test_a_routed_comment_gets_one_reply_over_repeated_pulls(trk, trk_home, aske
     pulled(trk)
     again = pulled(trk)
     assert again["comments"] == [] and again["replies"]["sent"] == []
-    assert len(replies(fake, c)) == 1 and len(fake.tool_calls("reply_to_artifact_comment")) == 1
+    assert len(replies(fake, c)) == 1 and len(fake.tool_calls("reply")) == 1
 
 
 @TABLE
@@ -399,7 +399,7 @@ def test_a_crash_after_a_routed_comments_disposition_sends_its_one_reply_next_pu
     assert len([r for r in journal(trk_home) if r["change"] == "comment.routed"]) == 1
     report = pulled(trk)
     assert report["comments"] == [] and report["replies"]["sent"] == [c]
-    fake.fail_next("502-after", "reply_to_artifact_comment")  # nothing is pending now, so nothing is sent
+    fake.fail_next("502-after", "reply")  # nothing is pending now, so nothing is sent
     pulled(trk)
     assert len(replies(fake, c)) == 1 and [r["state"] for r in outbox(trk_home)] == ["sent"]
 
@@ -407,7 +407,7 @@ def test_a_crash_after_a_routed_comments_disposition_sends_its_one_reply_next_pu
 @TABLE
 def test_a_routed_comments_reply_lost_ambiguously_is_not_sent_twice(trk, trk_home, asked, fake):
     c = fake.add_comment(slug(trk_home, asked["P"]), "header", "Metres.", author_id="u-kim")
-    fake.fail_next("502-after", "reply_to_artifact_comment")  # posted, then the edge answered 502
+    fake.fail_next("502-after", "reply")  # posted, then the edge answered 502
     assert pulled(trk)["replies"]["pending"] == [c]
     assert pulled(trk)["replies"]["sent"] == [c]
     assert len(replies(fake, c)) == 1 and fake.comments[c]["status"] == "open"
@@ -486,16 +486,16 @@ def test_two_pulls_racing_send_exactly_one_reply(trk, trk_home, mode, asked, fak
     handle = f"ask-{asked['A']}" if where == "box" else "header"
     c = fake.add_comment(slug(trk_home, asked["D"]), handle, "Metres.", author_id="u-kim")
     started, release = threading.Event(), threading.Event()
-    real = fake.__call__
-    reading = b"list_comment_activity" if mode == "activity" else b"list_artifact_comments"
+    real = fake.call
+    reading = "activity" if mode == "activity" else "list_comments"
 
-    def slow(url, headers, raw):
-        if reading in raw and b"tools/call" in raw and not started.is_set():
+    def slow(name, arguments, **kwargs):
+        if name == reading and not started.is_set():
             started.set()
             release.wait(5)  # the first pull holds pages.lock here while the second one starts
-        return real(url, headers, raw)
+        return real(name, arguments, **kwargs)
 
-    monkeypatch.setattr(artifacts, "urllib_transport", slow)
+    monkeypatch.setattr(fake, "call", slow)
     monkeypatch.setenv("TRK_ARTIFACT_TOKEN", TOKEN)
     reports, errors = [], []
 
@@ -521,16 +521,14 @@ def test_two_pulls_racing_send_exactly_one_reply(trk, trk_home, mode, asked, fak
     first.join(10)
     second.join(10)
     assert errors == []
-    assert len(fake.tool_calls("reply_to_artifact_comment")) == 1 and len(replies(fake, c)) == 1
+    assert len(fake.tool_calls("reply")) == 1 and len(replies(fake, c)) == 1
     assert sorted(len(r["comments"]) for r in reports) == [0, 1]
 
 
 def test_the_disposition_check_runs_inside_its_own_transaction(trk, trk_home, asked, fake):
     """Two pulls that read the same comment (as if pages.lock were bypassed) dispose of it once."""
     c = fake.add_comment(slug(trk_home, asked["D"]), f"ask-{asked['A']}", "Metres.", author_id="u-kim")
-    comment = next(row for row in fake._list_artifact_comments({"slug": slug(trk_home, asked["D"]),
-                                                                "includeResolved": True, "scope": "all"})["content"]
-                   for row in json.loads(row["text"])["comments"])
+    comment = fake._list_comments({"slug": slug(trk_home, asked["D"])})["comments"][0]
     first, second = store.open_store(), store.open_store()
     try:
         assert pull._dispose(first, asked["D"], slug(trk_home, asked["D"]), comment)["disposition"] == "reply"
@@ -578,7 +576,7 @@ def test_after_a_reopen_only_a_comment_after_it_is_a_reply(trk, trk_home, asked,
 def test_a_refused_reply_is_failed_and_recorded_on_the_page(trk, trk_home, asked, fake):
     d_slug = slug(trk_home, asked["D"])
     c = fake.add_comment(d_slug, f"ask-{asked['A']}", "Metres.", author_id="u-kim")
-    fake.grants.discard("reply_to_artifact_comment")  # refused outright, not ambiguously
+    fake.grants.discard("reply")  # refused outright, not ambiguously
     report = pulled(trk)
     assert report["replies"]["failed"] == [c]
     assert [r["state"] for r in outbox(trk_home)] == ["failed"]
@@ -590,21 +588,21 @@ def test_a_refused_reply_is_failed_and_recorded_on_the_page(trk, trk_home, asked
 @TABLE
 def test_an_ambiguous_reply_failure_reads_the_thread_before_sending_again(trk, trk_home, asked, fake):
     c = fake.add_comment(slug(trk_home, asked["D"]), f"ask-{asked['A']}", "Metres.", author_id="u-kim")
-    fake.fail_next("502-after", tool="reply_to_artifact_comment")  # the reply landed, the answer was lost
+    fake.fail_next("502-after", tool="reply")  # the reply landed, the answer was lost
     report = pulled(trk)
     assert report["replies"]["pending"] == [c] and [r["state"] for r in outbox(trk_home)] == ["pending"]
     assert len(replies(fake, c)) == 1
     fake.calls.clear()
     report = pulled(trk)
     assert report["replies"]["sent"] == [c]
-    assert fake.tool_calls("reply_to_artifact_comment") == [] and len(fake.tool_calls("list_artifact_comments")) >= 1
+    assert fake.tool_calls("reply") == [] and len(fake.tool_calls("list_comments")) >= 1
     assert len(replies(fake, c)) == 1 and [r["state"] for r in outbox(trk_home)] == ["sent"]
 
 
 @TABLE
 def test_a_reply_lost_before_the_origin_saw_it_is_sent_again(trk, trk_home, asked, fake):
     c = fake.add_comment(slug(trk_home, asked["D"]), f"ask-{asked['A']}", "Metres.", author_id="u-kim")
-    fake.fail_next("502", tool="reply_to_artifact_comment")
+    fake.fail_next("502", tool="reply")
     assert pulled(trk)["replies"]["pending"] == [c]
     assert fake.comments[c]["replies"] == []
     assert pulled(trk)["replies"]["sent"] == [c]
@@ -615,22 +613,22 @@ def test_a_reply_lost_before_the_origin_saw_it_is_sent_again(trk, trk_home, aske
 def test_a_pending_reply_whose_page_no_longer_shows_an_ask_reads_that_page(trk, trk_home, asked, fake, body):
     a, kim_slug = asked["A"], slug(trk_home, "needs-you:kim")
     assert trk("answer", a, "--outcome", "Metres", "--answer", body("Metres.\n"), "--as", "kim").code == 0
-    update, sneaked = fake._update_artifact, []
+    update, sneaked = fake._update, []
 
     def comment_first(arguments):  # after the last pull-before-drop's listing: just before kim's page drops the box
         if arguments["slug"] == kim_slug and not sneaked:
             sneaked.append(fake.add_comment(kim_slug, f"ask-{a}", "Metres, yes.", author_id="u-kim"))
         return update(arguments)
 
-    fake._update_artifact = comment_first
+    fake._update = comment_first
     flush(trk)  # the answered ask leaves every page
     (c,) = sneaked
-    fake.fail_next("502", tool="reply_to_artifact_comment")
+    fake.fail_next("502", tool="reply")
     assert pulled(trk)["replies"]["pending"] == [c]  # listed once more after its drop; the reply is lost
     assert pull.pages_to_read(db(trk_home)) == []
     fake.calls.clear()
     assert pulled(trk)["replies"]["sent"] == [c, c]  # the lost reply, then the closing reply that follows it
-    assert fake.tool_calls("list_artifact_comments") == [{"slug": kim_slug, "includeResolved": True, "scope": "all"}]
+    assert fake.tool_calls("list_comments") == [{"slug": kim_slug}]
     assert [m.split(".")[0] for m, _ in replies(fake, c)] == ["Already answered by kim: Metres", "Closed: Metres"]
     assert fake.comments[c]["status"] == "resolved"
 
@@ -640,16 +638,16 @@ def test_a_pending_reply_whose_page_no_longer_shows_an_ask_reads_that_page(trk, 
 
 def test_the_pull_reads_the_pages_that_show_or_showed_an_ask(trk, trk_home, asked, fake):
     pulled(trk)
-    listed = [args["slug"] for args in fake.tool_calls("list_artifact_comments")]
+    listed = [args["slug"] for args in fake.tool_calls("list_comments")]
     # Not T, which never showed one, nor michael's Needs-you page: the ask waits on kim.
     assert listed == [slug(trk_home, asked[k]) for k in ("P", "J", "D")] + [slug(trk_home, "needs-you:kim")]
 
 
 def test_a_listing_failure_is_recorded_on_its_page_and_cleared_by_the_next(trk, trk_home, asked, fake):
-    fake.fail_next("500", tool="list_artifact_comments")
+    fake.fail_next("500", tool="list_comments")
     report = pulled(trk)
     assert [e["item"] for e in report["errors"]] == [asked["P"]]
-    assert page_row(trk_home, asked["P"])["last_error"].startswith("list_artifact_comments:")
+    assert page_row(trk_home, asked["P"])["last_error"].startswith("list_comments:")
     pulled(trk)
     assert page_row(trk_home, asked["P"])["last_error"] is None
 
@@ -659,7 +657,7 @@ def test_a_page_whose_comments_cant_be_read_still_flushes_on_time(trk, trk_home,
     publishes it although every listing in that tick fails."""
     assert trk("edit", asked["D"], "--title", "D renamed").code == 0  # at 09:00, so D is due at 09:01
     monkeypatch.setenv("TRK_NOW", "2026-10-11T09:02:00Z")
-    fake.fail_next("500", tool="list_artifact_comments", times=100)  # every attempt, retries included
+    fake.fail_next("500", tool="list_comments", times=100)  # every attempt, retries included
     result = trk("pages", "tick", "--json")
     assert result.code == 0, result.err
     report = result.json()
@@ -675,9 +673,9 @@ def test_a_pull_error_does_not_hide_a_dirty_page_from_the_flusher(trk, trk_home,
 
     assert trk("edit", asked["D"], "--title", "D renamed").code == 0
     trk("pages", "flush", "--json")  # marks D, not due yet
-    fake.fail_next("500", tool="list_artifact_comments", times=3)
+    fake.fail_next("500", tool="list_comments", times=3)
     pulled(trk)
-    assert page_row(trk_home, asked["D"])["last_error"].startswith("list_artifact_comments:")
+    assert page_row(trk_home, asked["D"])["last_error"].startswith("list_comments:")
     conn = db(trk_home)
     try:
         assert flusher.next_due(conn) is not None  # flush --wait still sleeps until D falls due

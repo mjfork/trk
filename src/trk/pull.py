@@ -4,13 +4,13 @@ Loaded only by `pages pull` and `pages tick`. One pull is one unit of work under
 so two pulls never interleave. It starts with the token check (see `renewal`): while a 401 holds page
 writes it calls nothing, and a 401 during the pass ends it and sets the hold.
 
-1. **Read.** When `tools/list` offers `list_comment_activity` (service change 2), one cross-page
+1. **Read.** When the backend offers the activity log (`offers_activity`), one cross-page
    activity log from `meta.comment_cursor`, paged while `hasMore`: its `comment` events on tracker
    pages are the new root comments, and its `reply` and `status` events (the tracker's own replies, and
    resolves whose author fields describe the root's author) are never read. With no cursor stored, or
-   one the service calls `invalid_cursor`, the log is drained once to seed it and none of it is acted
+   one the backend calls `invalid_cursor`, the log is drained once to seed it and none of it is acted
    on. Otherwise, and also on a seeding pass or an activity call that fails (so nothing written before the
-   seed or during the failure goes unread), `list_artifact_comments` for every published page that
+   seed or during the failure goes unread), `list_comments` for every published page that
    shows an open ask (an open ask sits in its subtree) or showed one in its last publish (an `ask-`
    handle in `page_handles`), and once more a page whose last send dropped an `ask-` handle
    (`pages.reread`). The cursor is stored after the pass's dispositions commit.
@@ -28,7 +28,7 @@ writes it calls nothing, and a 401 during the pass ends it and sets the hold.
      (`ask.replied`, the ask left open) by the actor the comment's `authorId` is linked to (an unlinked one
      is linked to the one unlinked human with the same display name, else registered as a human, and the
      reply then tells an admin to merge them with `trk actor link` when a human of that name exists), told "Reply received…"; the asker confirms one as the answer with
-     `trk answer --from-comment` (tr-3vgrb). Without `authorId` on the wire (before service change 1) it is
+     `trk answer --from-comment` (tr-3vgrb). Without `authorId` (a backend that gives none) it is
      pointed at `trk answer`.
    - A later comment on an answered ask gets "Already answered…", on a withdrawn one "Withdrawn…".
    - A `waiting` comment replies to the box's one ask; with none or several it is told so and stays open.
@@ -40,7 +40,7 @@ writes it calls nothing, and a 401 during the pass ends it and sets the hold.
 4. **Close.** When an ask has closed (answered or withdrawn) and its box has left the page (no
    `ask-<id>` row in `page_handles`), each root comment on that box gets one closing reply, "Closed:
    <outcome>. Recorded on <ask title> (<id>)", sent with `resolve: true`, so the thread resolves in the same
-   call (the token has no `resolve_artifact_comment`). It goes through the outbox: the reply is a
+   call (the publisher never resolves a thread any other way). It goes through the outbox: the reply is a
    `page_replies` row queued with a `page_closings` marker in one transaction, so it is never queued or sent
    twice; a result that did not resolve, or `not_found`, is final (marker `gone`), and one whose ask was
    reopened before it was sent is dropped. It is queued after the pass sends its other replies, and never on a
@@ -58,7 +58,7 @@ not journaled; replies and registrations are, through their normal rows.
 
 import json
 
-from . import actors, artifacts, asks, clock, comments, items, needs_you, pages, render, renewal
+from . import actors, asks, clock, comments, items, needs_you, pages, publisher, render, renewal
 from .errors import TrkError, refused
 from .flusher import pages_lock
 from .store import PUBLISHER
@@ -66,9 +66,9 @@ from .store import PUBLISHER
 WAITING = "waiting"
 ASK_PREFIX = "ask-"
 AUTHORS_KEY = "page_authors"  # {author id: display name} for every author the pull has seen
-CURSOR_KEY = "comment_cursor"  # the comment activity log's cursor, opaque, as the service gave it
-ACTIVITY = "list_comment_activity"
-ACTIVITY_LIMIT = 500  # the service's maximum, so a drain takes as few calls as it can
+CURSOR_KEY = "comment_cursor"  # the comment activity log's cursor, opaque, as the backend gave it
+ACTIVITY = "activity"  # the call that reads the activity log, as its errors name it
+ACTIVITY_LIMIT = 500  # the backend contract's maximum, so a drain takes as few calls as it can
 CLOSINGS_KEY = "page_closings"  # {comment id: {reply: outbox row id, state: queued | resolved | gone, handle: its ask-<id> box}}
 CLOSINGS_FROM_KEY = "closings_from"  # stamp: a pull closes the threads of asks closed from then on
 START = ""  # the cursor stored by a seed that was given none (an empty log): read from the oldest event
@@ -84,18 +84,20 @@ NOTHING = "Nothing is waiting here."
 def pull(st, client):
     """One pull pass: read the comments, dispose of the new ones, send the outbox. Returns the report:
     the token check's fields (`held`, `renewal_ask`, maybe `renewal_ask_error`), `activity` (null when the
-    service offers none, else {seeded, events}), `comments` (one entry per disposition made), `replies`
+    backend offers none, else {seeded, events}), `comments` (one entry per disposition made), `replies`
     ({sent, failed, pending}: comment ids), `resolved` (comment ids of the threads resolved) and `errors`
     (per page)."""
     report = {"held": False, "renewal_ask": None, "activity": None, "comments": [],
               "replies": {"sent": [], "failed": [], "pending": []}, "resolved": [], "errors": []}
-    report.update(renewal.check(st))
+    if not client.COMMENTS:
+        return report  # a backend without comments has nothing to read and no thread to reply in
+    report.update(renewal.check(st, client))
     if report["held"]:
         return report  # a 401 holds every call until setup has a new token
     try:
         with pages_lock(st):
             _pass(st, client, report)
-    except artifacts.Unauthorized:
+    except publisher.Unauthorized:
         report.update(renewal.rejected(st, client))
     return report
 
@@ -176,29 +178,29 @@ def _read(st, client, report):
 
 def _list(st, client, item_id, slug, report):
     try:
-        comments = client.list_artifact_comments(slug).get("comments") or []
-    except artifacts.ServiceError as exc:
+        comments = client.list_comments(slug).get("comments") or []
+    except publisher.ServiceError as exc:
         _page_error(st, item_id, str(exc))
         report["errors"].append({"item": item_id, "slug": slug, "error": str(exc)})
-        if isinstance(exc, artifacts.Unauthorized):
+        if isinstance(exc, publisher.Unauthorized):
             raise
         return None
-    _clear_pull_error(st, item_id, "list_artifact_comments")
+    _clear_pull_error(st, item_id, "list_comments")
     _done_rereading(st, item_id)
     return comments
 
 
 def _offers_activity(st, client, report):
-    """Whether `tools/list` offers the activity log (service change 2). A `tools/list` that fails is recorded
+    """Whether the backend offers the activity log. An `offers_activity` call that fails is recorded
     as an activity-log failure, and the pass reads page by page."""
     try:
-        offered = ACTIVITY in client.tools()
-    except artifacts.Unauthorized:
+        offered = client.offers_activity()
+    except publisher.Unauthorized:
         raise
-    except artifacts.ServiceError as exc:
+    except publisher.ServiceError as exc:
         _activity_error(st, exc, report)
         return False
-    _clear_pull_error(st, None, "tools/list")
+    _clear_pull_error(st, None, "offers_activity")
     return offered
 
 
@@ -209,7 +211,7 @@ def _read_activity(st, client, report):
     stored = st.meta(CURSOR_KEY)
     seeded = stored is None
     events, cursor, failure, starts = _drain(client, stored or None)
-    if not seeded and isinstance(failure, artifacts.ToolError) and failure.error == "invalid_cursor":
+    if not seeded and isinstance(failure, publisher.Refused) and failure.error == "invalid_cursor":
         _activity_error(st, failure, report)  # re-seed rather than replay: the log from the start is history
         seeded, (events, cursor, failure, starts) = True, _drain(client, None)
     if failure is not None:
@@ -232,10 +234,10 @@ def _drain(client, cursor):
     events, starts = [], []
     while True:
         try:
-            page = client.list_comment_activity(cursor, limit=ACTIVITY_LIMIT)
-        except artifacts.Unauthorized:
+            page = client.activity(cursor, limit=ACTIVITY_LIMIT)
+        except publisher.Unauthorized:
             raise
-        except artifacts.ServiceError as exc:
+        except publisher.ServiceError as exc:
             return events, cursor, exc, starts
         starts.append((len(events), cursor))
         events += page.get("events") or []
@@ -270,7 +272,7 @@ def _live_pages(conn):
 def _activity_comments(conn, events):
     """The log's `comment` events on tracker pages, as root comments. Replies (the tracker's own among them)
     and status events are never read. A comment the wire doesn't mark `human` reads as no person's, so
-    it is `ignored` as an assistant's is; one on another artifact the token's owner owns is passed over."""
+    it is `ignored` as an assistant's is; one on another page the token's owner owns is passed over."""
     pages_by_slug = _live_pages(conn)
     threads = {}  # root comment id -> (replies, latest status), from the reply and status events after it
     for event in events:
@@ -368,7 +370,7 @@ def _decide(tx, item_id, slug, comment):
     store change the disposition causes. A comment that is read (on `waiting` or an ask's box) links its
     author to an actor, registering one when nobody is linked yet."""
     handle = comment.get("handle") or ""
-    if comment.get("authorKind", "human") != "human":  # absent before service change 1, when all are people's
+    if comment.get("authorKind", "human") != "human":  # absent from a backend without author kinds: all are people's
         return IGNORED, None, None, False  # only people comment; an assistant's (or unknown) root comment is no answer
     note = actors.merge_note(tx.conn, comment["authorId"], comment.get("author")) if comment.get("authorId") else None
     row = _ask(tx.conn, handle[len(ASK_PREFIX):]) if handle.startswith(ASK_PREFIX) else None
@@ -386,8 +388,8 @@ def _decide(tx, item_id, slug, comment):
 
 
 def _commenter(tx, comment):
-    """The actor a comment's author id is linked to, registered now if nobody is; None before service
-    change 1, when the wire carries no author id."""
+    """The actor a comment's author id is linked to, registered now if nobody is; None when the
+    backend gives no author id."""
     author_id = comment.get("authorId")
     if not author_id:
         return None
@@ -458,7 +460,7 @@ def _on_ask(tx, row, slug, comment):
         return _on_closed(conn, row)
     if not _after_opening(conn, row, _created(comment)):
         return _before_reopening(conn, row)
-    if not comment.get("authorId"):  # before service change 1: the wire says nothing about who wrote it
+    if not comment.get("authorId"):  # a backend without author ids says nothing about who wrote it
         return USE_CLI, ask_id, f"Answering by comment isn't enabled yet: answer with `trk answer {ask_id}`.", False
     body = comment.get("comment") or ""
     if not body.strip():
@@ -499,7 +501,7 @@ def _latest(conn, item_id, change):
 
 
 def _note_authors(st, comments):
-    """Remember every author id seen, with the display name the service gave, for `trk pages authors`."""
+    """Remember every author id seen, with the display name the backend gave, for `trk pages authors`."""
     seen = {c["authorId"]: " ".join((c.get("author") or "").split()) for c in comments
             if c.get("authorId") and c.get("authorKind") != "assistant"}
     if not seen:
@@ -567,22 +569,22 @@ def _send(st, client, threads, row, report, *, queued_now=False):
     gone = None
     if not already:
         try:
-            result = client.reply_to_artifact_comment(row["slug"], row["comment_id"], row["body"], resolve=resolve)
-        except artifacts.ServiceError as exc:
+            result = client.reply(row["slug"], row["comment_id"], row["body"], resolve=resolve)
+        except publisher.ServiceError as exc:
             if item_id:
                 _page_error(st, item_id, str(exc))
-            if isinstance(exc, artifacts.Unauthorized):
+            if isinstance(exc, publisher.Unauthorized):
                 raise
             if getattr(exc, "ambiguous", False):
                 report["replies"]["pending"].append(row["comment_id"])  # read the thread before sending again
                 return
             _reply_state(st, row["id"], "failed", reason=str(exc))
             report["replies"]["failed"].append(row["comment_id"])
-            if closing and isinstance(exc, artifacts.ToolError) and exc.error == "not_found":
+            if closing and isinstance(exc, publisher.Refused) and exc.error == "not_found":
                 _closing_state(st, closing[0], "gone")  # the thread is gone, or not the token owner's to resolve
             return
         if closing and not (isinstance(result, dict) and result.get("resolved") is True and "note" not in result):
-            gone = (result.get("note") if isinstance(result, dict) else None) or "the service did not resolve it"
+            gone = (result.get("note") if isinstance(result, dict) else None) or "the backend did not resolve it"
     elif closing and (thread or {}).get("status") != "resolved":
         gone = "the closing reply is on the thread but the thread is not resolved"
     _reply_state(st, row["id"], "sent")
@@ -720,7 +722,9 @@ def tidy(st, client, key, *, dry_run=False):
     token check's fields and the send's `replies`, `resolved` and `errors`."""
     report = {"held": False, "renewal_ask": None, "page": key, "slug": None, "closing": [], "skipped": [],
               "replies": {"sent": [], "failed": [], "pending": []}, "resolved": [], "errors": []}
-    report.update(renewal.check(st))
+    if not client.COMMENTS:
+        raise refused("no-comments", f"the {client.NAME} page backend has no comments to tidy")
+    report.update(renewal.check(st, client))
     if report["held"]:
         return report
     page = st.conn.execute("SELECT * FROM pages WHERE item_id = ?", (key,)).fetchone()
@@ -730,7 +734,7 @@ def tidy(st, client, key, *, dry_run=False):
     try:
         with pages_lock(st):
             _tidy(st, client, page, report, dry_run)
-    except artifacts.Unauthorized:
+    except publisher.Unauthorized:
         report.update(renewal.rejected(st, client))
     return report
 
@@ -738,10 +742,10 @@ def tidy(st, client, key, *, dry_run=False):
 def _tidy(st, client, page, report, dry_run):
     slug, key = page["slug"], page["item_id"]
     try:
-        listed = client.list_artifact_comments(slug).get("comments") or []
-    except artifacts.Unauthorized:
+        listed = client.list_comments(slug).get("comments") or []
+    except publisher.Unauthorized:
         raise
-    except artifacts.ServiceError as exc:
+    except publisher.ServiceError as exc:
         report["errors"].append({"item": key, "slug": slug, "error": str(exc)})
         return
     done = closings(st.conn)

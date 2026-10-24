@@ -228,7 +228,7 @@ def build_parser():
     actor_edit.add_argument("--display", required=True)
     actor_edit.set_defaults(handler=cmd_actor_edit)
     actor_link = actor_verbs.add_parser("link", parents=[common],
-                                        help="link an actor to an artifact-service author id (page comments)")
+                                        help="link an actor to a page commenter's author id (page comments)")
     actor_link.add_argument("id")
     actor_link.add_argument("--service-user", required=True, metavar="ID",
                             help="the author id `trk pages authors` lists")
@@ -417,11 +417,15 @@ def build_parser():
     pages.set_defaults(handler=cmd_pages)
     pages_verbs = pages.add_subparsers(dest="pages_verb", parser_class=Parser)
     pages_setup = pages_verbs.add_parser("setup", parents=[common],
-                                         help="configure publishing and check the token (never stored or printed)")
-    pages_setup.add_argument("--base-url", required=True, metavar="URL", help="the artifact service, https://…")
+                                         help="configure publishing and check the backend (a token is never stored or printed)")
+    pages_setup.add_argument("--backend", metavar="NAME",
+                             help="where pages go: folder (built in) or an installed backend (default: as set)")
+    pages_setup.add_argument("--dir", metavar="PATH", help="folder: the directory the pages are written to")
+    pages_setup.add_argument("--base-url", metavar="URL",
+                             help="a token backend's service, https://…; folder: where --dir is served (optional)")
     pages_setup.add_argument("--token-file", default=None, metavar="PATH",
-                             help="the `tracker` token, mode 0600 (default ~/.config/trk/token)")
-    pages_setup.add_argument("--expires", required=True, metavar="YYYY-MM-DD", help="the token's expiry date")
+                             help="a token backend's `tracker` token, mode 0600 (default ~/.config/trk/token)")
+    pages_setup.add_argument("--expires", metavar="YYYY-MM-DD", help="a token backend's token expiry date")
     pages_setup.add_argument("--home", required=True, metavar="ID", help="the open item the publisher's asks sit under")
     pages_setup.add_argument("--team", metavar="SLUG", help="the team every page is shared on (default: as set, tracker)")
     pages_setup.set_defaults(handler=cmd_pages_setup)
@@ -1393,16 +1397,20 @@ def cmd_pages_setup(args):
     st = store.open_store()
     try:
         actor = store.resolve_actor(st, args.as_actor)
-        done = pages.setup(st, actor, base_url=args.base_url, token_file=args.token_file or pages.DEFAULT_TOKEN_FILE,
-                           expires=args.expires,
-                           home=args.home, team=args.team)
+        done = pages.setup(st, actor, backend=args.backend, base_url=args.base_url,
+                           token_file=args.token_file or pages.DEFAULT_TOKEN_FILE, expires=args.expires,
+                           home=args.home, team=args.team, folder=args.dir)
     finally:
         st.close()
     if args.json:
         _print_json({"schema": 1, **done})
     else:
-        print(f"publishing set up: {done['base_url']}, team {done['team']}, token {done['token_file']} "
-              f"(expires {done['expires']}), home {done['home']}")
+        if done["token_file"]:
+            print(f"publishing set up: {done['backend']} at {done['base_url']}, team {done['team']}, "
+                  f"token {done['token_file']} (expires {done['expires']}), home {done['home']}")
+        else:
+            served = f", served at {done['base_url']}" if done["base_url"] else ""
+            print(f"publishing set up: {done['backend']} in {done['dir']}{served}, home {done['home']}")
         renewal_ask = done["renewal_ask"]
         if renewal_ask is None:
             return
@@ -1480,7 +1488,7 @@ def cmd_pages_tidy(args):
         _print_json({"schema": 1, "dry_run": args.dry_run, **report})
         return
     if report["held"]:
-        print(f"held: the artifact service rejected the token; page reads and writes wait for `trk pages setup` "
+        print(f"held: the page backend rejected the token; page reads and writes wait for `trk pages setup` "
               f"with a new one ({report['renewal_ask'] or 'no renewal ask'})")
     verb = "would close" if args.dry_run else "closing"
     print(f"{report['page']}: {verb} {len(report['closing'])} thread(s), "
@@ -1499,7 +1507,7 @@ def cmd_pages_tidy(args):
 def _print_pull_report(report, *, renewal):
     """The pull's lines; the token check's are left to the flush report when one follows."""
     if renewal and report["held"]:
-        print(f"held: the artifact service rejected the token; page reads and writes wait for `trk pages setup` "
+        print(f"held: the page backend rejected the token; page reads and writes wait for `trk pages setup` "
               f"with a new one ({report['renewal_ask'] or 'no renewal ask'})")
     if renewal and report.get("renewal_ask_error"):
         print(f"renewal ask not opened: {report['renewal_ask_error']}", file=sys.stderr)
@@ -1537,7 +1545,7 @@ def _print_flush_report(args, report):
         _print_json({"schema": 1, **report})
         return
     if report["held"]:
-        print(f"held: the artifact service rejected the token; page writes wait for `trk pages setup` "
+        print(f"held: the page backend rejected the token; page writes wait for `trk pages setup` "
               f"with a new one ({report['renewal_ask'] or 'no renewal ask'})")
     elif report["renewal_ask"]:
         print(f"renewal ask: {report['renewal_ask']} (the token expires within {renewal.WINDOW.days} days)")
