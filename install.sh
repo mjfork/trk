@@ -243,17 +243,17 @@ install_store() {
 }
 
 next_steps() {
-  cat <<EOF
+  cat <<'EOF'
 
 == next steps
-1. Make sure \`trk\` is on your PATH: run \`trk --version\`. If it is not found, run \`uv tool update-shell\`.
+1. Make sure `trk` is on your PATH: run `trk --version`. If it is not found, run `uv tool update-shell`.
 2. Register the agent that will work for you, so its writes are not recorded as yours:
      trk actor add worker --kind agent
    Check actors and roles with `trk actors` and `trk roles`; reassign a role with
    `trk roles set <role> <actor>`.
    Then read docs/agents.md.
 3. Restart Claude Code so it loads the new skills and hooks.
-4. Optional, publishing pages: run \`trk pages setup --help\`. It reads a token file (mode 0600) named with --token-file; this script never sees it.
+4. Optional, publishing pages: run `trk pages setup --help`. It reads a token file (mode 0600) named with --token-file; this script never sees it.
    Then run ./install.sh --pages for the timer. See docs/operations.md.
 5. Try the quickstart in README.md.
 EOF
