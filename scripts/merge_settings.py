@@ -63,7 +63,7 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
     path, repo = args.settings, args.repo.resolve()
-    before = path.read_text() if path.exists() else ""
+    before = path.read_text(encoding="utf-8") if path.exists() else ""
     try:
         settings = json.loads(before) if before.strip() else {}
     except json.JSONDecodeError as exc:
@@ -71,7 +71,7 @@ def main(argv=None):
     if not isinstance(settings, dict):
         sys.exit(f"{path} does not hold a JSON object. Nothing was changed.")
     (add if args.action == "add" else remove)(settings, repo)
-    after = json.dumps(settings, indent=2) + "\n"
+    after = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
     if before.strip() and json.loads(before) == settings or not before.strip() and not settings:
         print(f"settings: {path} already up to date")
         return 0
@@ -85,7 +85,7 @@ def main(argv=None):
         shutil.copy2(path, backup)
         print(f"settings: backed up to {backup}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(after)
+    path.write_text(after, encoding="utf-8")
     print(f"settings: updated {path}")
     return 0
 

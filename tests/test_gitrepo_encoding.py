@@ -2,11 +2,15 @@
 an ADR and a changed path are decoded leniently, so blast-radius rates the change instead of raising."""
 
 import subprocess
+import sys
 
 import pytest
 
 from gated import git
 from trk import blast, gitrepo
+
+# macOS (APFS) refuses a file name that is not UTF-8, so these cases cannot be set up there
+pytestmark = pytest.mark.skipif(sys.platform == "darwin", reason="APFS refuses non-UTF-8 file names")
 
 LATIN1_RULES = b"# r\xe9gles caf\xe9\nYELLOW src/**\n"
 LATIN1_ADR = b"# D\xe9cision\nScope: lib/**\n"

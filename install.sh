@@ -88,14 +88,18 @@ make_bundle() {
   local out=${BUNDLE:-trk.bundle}
   command -v git >/dev/null || die "git is required for make-bundle"
   [[ -e $out ]] && die "$out already exists; remove it or pick another name"
-  local refs=()
+  local refs=() branch head
+  branch=$(default_branch)
   if ((ALL_BRANCHES)); then
     refs=(--branches --tags)
   else
-    refs=("$(default_branch)" --tags)
+    refs=("$branch" --tags)
   fi
-  act git -C "$REPO" bundle create "$(cd "$(dirname "$out")" && pwd -P)/$(basename "$out")" "${refs[@]}"
-  ((DRY)) || say "On the other machine: git clone $out trk && cd trk && ./install.sh"
+  # HEAD tells a clone what to check out (git 2.48+ checks out nothing without it); only when it is that branch
+  head=$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null) || head=
+  [[ $head == "$branch" ]] && refs=(HEAD ${refs[@]+"${refs[@]}"})
+  act git -C "$REPO" bundle create "$(cd "$(dirname "$out")" && pwd -P)/$(basename "$out")" ${refs[@]+"${refs[@]}"}
+  ((DRY)) || say "On the other machine: git clone -b $branch $out trk && cd trk && ./install.sh"
 }
 
 skill_state() { # same | differs | absent for one skill
@@ -107,10 +111,10 @@ skill_state() { # same | differs | absent for one skill
 
 check_skills() { # refuse to overwrite a skill that differs from the repo copy, unless --force
   local s differing=()
-  for s in "${SKILLS[@]}"; do [[ $(skill_state "$s") == differs ]] && differing+=("$s"); done
+  for s in ${SKILLS[@]+"${SKILLS[@]}"}; do [[ $(skill_state "$s") == differs ]] && differing+=("$s"); done
   ((${#differing[@]})) || return 0
   say "== skills that differ from the repo copy"
-  for s in "${differing[@]}"; do
+  for s in ${differing[@]+"${differing[@]}"}; do
     say "skill $s:"
     diff -rq "$REPO/skills/$s" "$CLAUDE_DIR/skills/$s" | sed 's/^/  /' || true
   done
@@ -127,7 +131,7 @@ install_skills() {
   say "== skills"
   local s state stamp
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
-  for s in "${SKILLS[@]}"; do
+  for s in ${SKILLS[@]+"${SKILLS[@]}"}; do
     state=$(skill_state "$s")
     case $state in
       same) say "skill $s: already installed" ;;
@@ -144,7 +148,7 @@ install_skills() {
 uninstall_skills() {
   say "== skills"
   local s state
-  for s in "${SKILLS[@]}"; do
+  for s in ${SKILLS[@]+"${SKILLS[@]}"}; do
     state=$(skill_state "$s")
     case $state in
       same) say "skill $s: removing"; act rm -rf "$CLAUDE_DIR/skills/$s" ;;
@@ -155,10 +159,10 @@ uninstall_skills() {
 }
 
 settings_cmd() { # add|remove
-  command -v python3 >/dev/null || die "python3 is required"
+  [[ -n $PY ]] || find_python || die "python 3.12 or newer is required"
   local flags=()
   ((DRY)) && flags+=(--dry-run)
-  python3 "$REPO/scripts/merge_settings.py" "$1" --settings "$SETTINGS" --repo "$REPO" "${flags[@]}"
+  "$PY" "$REPO/scripts/merge_settings.py" "$1" --settings "$SETTINGS" --repo "$REPO" ${flags[@]+"${flags[@]}"}
 }
 
 render_units() { # prints the service unit with the installed trk path
@@ -177,12 +181,21 @@ install_units() {
   local trk
   trk=$(command -v trk 2>/dev/null || true)
   [[ -z $trk ]] && trk=$(uv tool dir --bin 2>/dev/null)/trk
+  if ((DRY)) && ! command -v systemctl >/dev/null && [[ $(uname -s) == Darwin ]]; then
+    say "[dry-run] $trk pages timer install   (a launchd agent, ~/Library/LaunchAgents/com.trk.pages.plist)"
+    return
+  fi
   if ((DRY)); then
     say "[dry-run] write $UNIT_DIR/trk-pages.service (ExecStart=$trk pages tick) and trk-pages.timer"
     say "[dry-run] systemctl --user daemon-reload && systemctl --user enable --now trk-pages.timer"
     return
   fi
-  command -v systemctl >/dev/null || die "--pages needs systemctl (systemd)"
+  if ! command -v systemctl >/dev/null; then
+    [[ $(uname -s) == Darwin ]] || die "--pages needs systemctl (systemd), or launchd on macOS"
+    "$trk" pages timer install          # macOS: trk writes and loads its own launchd agent
+    say "timer enabled. Publishing still needs 'trk pages setup' (see docs/operations.md)."
+    return
+  fi
   mkdir -p "$UNIT_DIR"
   render_units "$trk" >"$UNIT_DIR/trk-pages.service"
   cp "$REPO/systemd/trk-pages.timer" "$UNIT_DIR/trk-pages.timer"
@@ -193,6 +206,15 @@ install_units() {
 
 uninstall_units() {
   say "== page publisher timer"
+  local agent=$HOME/Library/LaunchAgents/com.trk.pages.plist
+  if [[ -e $agent ]]; then
+    if ((DRY)); then say "[dry-run] unload and delete $agent"
+    else
+      launchctl bootout "gui/$(id -u)/com.trk.pages" 2>/dev/null || true
+      rm -f "$agent"
+      say "launchd agent removed"
+    fi
+  fi
   if [[ -e $UNIT_DIR/trk-pages.timer || -e $UNIT_DIR/trk-pages.service ]]; then
     if ((DRY)); then say "[dry-run] disable the timer and delete the units in $UNIT_DIR"
     else
@@ -206,13 +228,22 @@ uninstall_units() {
   fi
 }
 
+# The first python 3.12+ on PATH: python3, else a versioned one (macOS puts its own 3.9 python3 first).
+PY=
+find_python() {
+  local c
+  for c in python3 python3.14 python3.13 python3.12; do
+    command -v "$c" >/dev/null && "$c" -c 'import sys; sys.exit(sys.version_info < (3, 12))' 2>/dev/null &&
+      { PY=$c; return 0; }
+  done
+  return 1
+}
+
 check_prereqs() {
   say "== checks"
-  command -v python3 >/dev/null || die "python 3.12 or newer is required; python3 is not on PATH"
-  python3 -c 'import sys; sys.exit(sys.version_info < (3, 12))' ||
-    die "python 3.12 or newer is required; found $(python3 --version 2>&1)"
+  find_python || die "python 3.12 or newer is required; found $(python3 --version 2>&1 || echo 'no python3 on PATH')"
   command -v uv >/dev/null || die "uv is required (https://docs.astral.sh/uv/); it is not on PATH"
-  say "python3 and uv found"
+  say "$PY and uv found"
 }
 
 tool_installed() { uv tool list 2>/dev/null | grep -q '^trk '; }
@@ -225,7 +256,7 @@ install_tool() {
   if tool_installed && ! ((FORCE)); then
     say "trk is already installed (use --force to reinstall)"
   else
-    act uv "${args[@]}" "$REPO"
+    act uv ${args[@]+"${args[@]}"} "$REPO"
     if ((DRY)); then say "[dry-run] record that this script installed trk"
     else mkdir -p "$(dirname "$MARKER")" && printf '%s\n' "$REPO" >"$MARKER"; fi
   fi

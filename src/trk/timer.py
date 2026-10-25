@@ -5,9 +5,15 @@ for a flusher that died or exited with failed pages left.
 Loaded only by `pages timer`. The units go to `$XDG_CONFIG_HOME/systemd/user` (default
 `~/.config/systemd/user`) and are driven with `systemctl --user`. Under `$TRK_TEST=1` the default
 unit directory is refused, as the default store is, so no test can touch this machine's systemd.
+
+On macOS, where there is no systemctl, the timer is a launchd agent instead: `com.trk.pages.plist`
+in `~/Library/LaunchAgents` (or `$TRK_LAUNCH_AGENTS`), run every 60 seconds and driven with
+`launchctl`. Under `$TRK_TEST=1` the default folder is refused there too.
 """
 
 import os
+import plistlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -19,14 +25,39 @@ from .errors import refused, usage
 SERVICE = "trk-pages.service"
 TIMER = "trk-pages.timer"
 PERIOD = "60s"
+LABEL = "com.trk.pages"
+PLIST = LABEL + ".plist"
+SECONDS = 60
+
+
+def launchd():
+    """True on macOS without systemctl: the timer is a launchd agent."""
+    return sys.platform == "darwin" and shutil.which("systemctl") is None
+
+
+def name():
+    """What the timer is called where it lives."""
+    return PLIST if launchd() else TIMER
 
 
 def unit_dir():
+    if launchd():
+        return agents_dir()
     default = Path.home() / ".config" / "systemd" / "user"
     config = os.environ.get("XDG_CONFIG_HOME")
     path = Path(config).expanduser() / "systemd" / "user" if config else default
     if os.environ.get("TRK_TEST") == "1" and path.resolve() == default.resolve():
         raise usage(f"$TRK_TEST=1 refuses the default systemd user directory {default}; set $XDG_CONFIG_HOME",
+                    rule="test-units")
+    return path
+
+
+def agents_dir():
+    default = Path.home() / "Library" / "LaunchAgents"
+    override = os.environ.get("TRK_LAUNCH_AGENTS")
+    path = Path(override).expanduser() if override else default
+    if os.environ.get("TRK_TEST") == "1" and path.resolve() == default.resolve():
+        raise usage(f"$TRK_TEST=1 refuses the default launchd folder {default}; set $TRK_LAUNCH_AGENTS",
                     rule="test-units")
     return path
 
@@ -75,6 +106,34 @@ def units(trk, home):
     return {SERVICE: service, TIMER: timer}
 
 
+def plist(trk, home):
+    """The launchd agent: `trk pages tick` every SECONDS, with a PATH that finds trk and its adapter."""
+    path = os.pathsep.join(dict.fromkeys([str(Path(trk).parent), str(Path.home() / ".local/bin"),
+                                          "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]))
+    log = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "trk" / "pages-timer.log"
+    env = {"PATH": path, **({"TRK_HOME": home} if home else {})}
+    return plistlib.dumps({"Label": LABEL, "ProgramArguments": [trk, "pages", "tick"],
+                           "StartInterval": SECONDS, "EnvironmentVariables": env,
+                           "StandardOutPath": str(log), "StandardErrorPath": str(log)}), log
+
+
+def launchctl(*argv, check=True):
+    """Run `launchctl …`; a failure with `check` is refused under rule `launchctl`."""
+    try:
+        done = subprocess.run(["launchctl", *argv], capture_output=True, text=True, check=False)
+    except OSError as exc:
+        raise refused("launchctl", f"cannot run launchctl: {exc.strerror or exc}") from None
+    if check and done.returncode != 0:
+        detail = (done.stderr or done.stdout).strip()
+        raise refused("launchctl", f"`launchctl {' '.join(argv)}` failed ({done.returncode})"
+                                   + (f": {detail}" if detail else ""))
+    return done
+
+
+def _domain():
+    return f"gui/{os.getuid()}"
+
+
 def systemctl(*argv, check=True):
     """Run `systemctl --user …`; a failure with `check` is refused under rule `systemctl`."""
     try:
@@ -98,6 +157,15 @@ def install():
         store.guard_default(store.default_dir(), "install a timer for")
     trk = trk_path()
     directory.mkdir(parents=True, exist_ok=True)
+    if launchd():
+        content, log = plist(trk, home)
+        log.parent.mkdir(parents=True, exist_ok=True)
+        tmp = directory / (PLIST + ".tmp")
+        tmp.write_bytes(content)
+        os.replace(tmp, directory / PLIST)
+        launchctl("bootout", f"{_domain()}/{LABEL}", check=False)  # a loaded old copy keeps its old settings
+        launchctl("bootstrap", _domain(), str(directory / PLIST))
+        return {**status(), "exec_start": shlex.join([trk, "pages", "tick"]), "trk_home": home}
     for name, content in units(trk, home).items():
         tmp = directory / (name + ".tmp")
         tmp.write_text(content)
@@ -110,6 +178,12 @@ def install():
 def remove():
     """Stop and disable the timer, delete both units and reload. Removing what isn't there is fine."""
     directory = unit_dir()
+    if launchd():
+        present = [PLIST] if (directory / PLIST).exists() else []
+        if present:
+            launchctl("bootout", f"{_domain()}/{LABEL}", check=False)  # an unloaded agent is already off
+            (directory / PLIST).unlink()
+        return {**status(), "removed": present}
     present = [name for name in (SERVICE, TIMER) if (directory / name).exists()]
     if present:
         systemctl("disable", "--now", TIMER, check=False)  # an unloaded timer is already off
@@ -123,6 +197,10 @@ def remove():
 def status():
     """Whether the unit files exist, and what systemd says of the timer."""
     directory = unit_dir()
+    if launchd():
+        loaded = launchctl("print", f"{_domain()}/{LABEL}", check=False).returncode == 0
+        return {"unit_dir": str(directory), "installed": (directory / PLIST).exists(),
+                "enabled": "enabled" if loaded else "disabled", "active": "active" if loaded else "inactive"}
     installed = all((directory / name).exists() for name in (SERVICE, TIMER))
     enabled = systemctl("is-enabled", TIMER, check=False).stdout.strip() or "unknown"
     active = systemctl("is-active", TIMER, check=False).stdout.strip() or "unknown"

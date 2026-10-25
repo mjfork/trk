@@ -461,7 +461,8 @@ def build_parser():
     pages_tick = pages_verbs.add_parser("tick", parents=[common], help="pull, then flush (the timer's command)")
     pages_tick.set_defaults(handler=cmd_pages_tick)
     pages_timer = pages_verbs.add_parser("timer", parents=[common],
-                                         help="the systemd user timer that runs `trk pages tick` every minute")
+                                         help="the timer that runs `trk pages tick` every minute "
+                                              "(a systemd user timer; a launchd agent on macOS)")
     pages_timer.add_argument("action", choices=("install", "remove", "status"))
     pages_timer.set_defaults(handler=cmd_pages_timer)
     pages_render = pages_verbs.add_parser("render", parents=[common],
@@ -1620,7 +1621,7 @@ def cmd_pages_timer(args):
         return
     if args.action == "remove":
         print(f"removed: {' '.join(done['removed']) or 'nothing'}")
-    print(f"timer {timer.TIMER} in {done['unit_dir']}: "
+    print(f"timer {timer.name()} in {done['unit_dir']}: "
           f"{'installed' if done['installed'] else 'not installed'}, {done['enabled']}, {done['active']}")
     if args.action == "install":
         print(f"runs every {timer.PERIOD}: {done['exec_start']}" + (f" (TRK_HOME={done['trk_home']})"

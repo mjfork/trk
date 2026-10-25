@@ -288,7 +288,7 @@ This removes the `trk` command (only if the installer put it there), the three s
 | Symptom | Cause and fix |
 |---|---|
 | `trk: command not found` | The uv tool directory is not on your PATH. Run `uv tool update-shell`, then open a new terminal. |
-| The installer says python 3.12 is required | `python3 --version` is older. Install Python 3.12 or newer and run the installer again. |
+| The installer says python 3.12 is required | no `python3`, `python3.12`, `python3.13` or `python3.14` on PATH is 3.12 or newer (macOS's own `python3` is 3.9). Install Python 3.12 or newer, for example with Homebrew, and run the installer again. |
 | `claim` says it needs a session | The hooks are not active. Restart Claude Code after the install, or pass `--session <uuid>`. |
 | An agent's claim vanished | The lease lapsed after 60 minutes, or `/clear` made a new session. Claim again. |
 | A write was recorded under your name | The agent forgot `--as <actor>`. The store's default actor is the person who ran `trk init`. Every agent write needs `--as`. |

@@ -4,7 +4,7 @@ This page explains what `install.sh` does, one step at a time, and how to do eac
 
 ## Before you start
 
-- **Python 3.12 or newer.** Check with `python3 --version`.
+- **Python 3.12 or newer** on PATH, as `python3` or `python3.12`–`python3.14` (macOS's own `python3` is 3.9; Homebrew's works). Check with `python3 --version`.
 - **uv.** This is a Python tool installer. trk uses it to put the `trk` command on your PATH.
 - **git.** You need it to copy the repo and to run most gates.
 - **Claude Code** (optional). The skills and hooks are for it.
@@ -22,7 +22,7 @@ The repo has no hosted home, so you copy it by hand. There are two ways.
    ```bash
    ./install.sh make-bundle trk.bundle
    ```
-   This packs the default branch (`main` or `master`) and the tags, with their history. It does not pack worktree refs or other local branches, because they mean nothing on the other machine. Add `--all-branches` to pack every local branch too. It refuses to overwrite a file that exists. Copy it to the new machine, then run `git clone trk.bundle trk`.
+   This packs the default branch (`main` or `master`) and the tags, with their history. It does not pack worktree refs or other local branches, because they mean nothing on the other machine. Add `--all-branches` to pack every local branch too. It refuses to overwrite a file that exists. The bundle also carries HEAD when the checkout is on that branch, so a clone checks it out. Copy it to the new machine, then run `git clone -b master trk.bundle trk` (the script prints the branch).
 
 To bring a later version over, make a new bundle and run `git pull ../trk.bundle` in the clone, or `git pull` again from the path or host. The clone's `origin` stays the path or bundle you cloned from.
 
@@ -38,7 +38,7 @@ To bring a later version over, make a new bundle and run `git pull ../trk.bundle
 
 ### 1. Checks
 
-The script stops with a clear message if `python3` is missing or older than 3.12, or if `uv` is missing.
+The script stops with a clear message if no Python 3.12 or newer is on PATH, or if `uv` is missing.
 
 ### 2. The `trk` command
 
@@ -82,7 +82,7 @@ Restart Claude Code after the merge. It reads settings when a session starts.
 
 ### 6. The page publisher timer (`--pages`)
 
-This step is off unless you pass `--pages`. It writes `trk-pages.service` and `trk-pages.timer` into `~/.config/systemd/user` from the templates in `systemd/`, then runs `systemctl --user daemon-reload` and `systemctl --user enable --now trk-pages.timer`. The service runs the installed `trk pages tick`. If `$TRK_HOME` is set, the service sets it too. Read [operations.md](operations.md) before you turn this on, because publishing also needs `trk pages setup`.
+This step is off unless you pass `--pages`. It writes `trk-pages.service` and `trk-pages.timer` into `~/.config/systemd/user` from the templates in `systemd/`, then runs `systemctl --user daemon-reload` and `systemctl --user enable --now trk-pages.timer`. The service runs the installed `trk pages tick`. If `$TRK_HOME` is set, the service sets it too. On macOS, which has no systemd, it runs `trk pages timer install`, which writes and loads a launchd agent instead. Read [operations.md](operations.md) before you turn this on, because publishing also needs `trk pages setup`.
 
 `trk pages timer install` does the same job without the script.
 

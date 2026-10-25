@@ -10,7 +10,7 @@ This page covers the jobs that come after install: publishing pages, the timer, 
 | The `trk` command | uv's tool directory, usually `~/.local/bin/trk`. |
 | Skills | `~/.claude/skills/{trk,trk-drive-program,trk-create-program}`. |
 | Hooks | Entries in `~/.claude/settings.json`. |
-| Timer units | `~/.config/systemd/user/trk-pages.{service,timer}`. |
+| Timer units | `~/.config/systemd/user/trk-pages.{service,timer}`; on macOS the launchd agent `~/Library/LaunchAgents/com.trk.pages.plist`. |
 
 The store is machine-wide. Every project and session on the machine shares it. Never copy, edit or delete `store.db` by hand while trk is in use. Use `trk backup` and `trk restore`.
 
@@ -76,6 +76,8 @@ trk pages timer remove
 ```
 
 Both ways write `trk-pages.service` and `trk-pages.timer` to `~/.config/systemd/user` and enable the timer. The service runs the installed `trk` by its absolute path, and sets `TRK_HOME` if it was set at install. If you move `trk` or change `TRK_HOME`, install again; it rewrites the units.
+
+On macOS, which has no systemd, both ways write the launchd agent `~/Library/LaunchAgents/com.trk.pages.plist` instead: it runs `trk pages tick` every 60 seconds with `TRK_HOME` as above and a PATH that finds `trk` and its adapter, and logs to `~/.local/state/trk/pages-timer.log`. Check it with `launchctl print gui/$(id -u)/com.trk.pages`.
 
 For the timer to keep running when you are logged out, run `loginctl enable-linger $USER` once. Check the log with `journalctl --user -u trk-pages.service`.
 

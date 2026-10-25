@@ -43,6 +43,8 @@ def box(tmp_path):
     for name, body in (("uv", FAKE_UV), ("systemctl", FAKE_SYSTEMCTL)):
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
+    (bin_dir / "python3").write_text(f"#!/bin/sh\nexec {sys.executable} \"$@\"\n")   # this python, not the box's
+    (bin_dir / "python3").chmod(0o755)
     env = {
         "HOME": str(home),
         "PATH": f"{bin_dir}:{home}/.local/bin:/usr/bin:/bin",
@@ -229,9 +231,10 @@ def test_pages_installs_the_units_the_cli_would_write(box):
 
 
 def test_old_python_is_refused(box, tmp_path):
-    fake = tmp_path / "bin" / "python3"
-    fake.write_text("#!/usr/bin/env bash\nexit 1\n")
-    fake.chmod(0o755)
+    for name in ("python3", "python3.14", "python3.13", "python3.12"):   # every python the script looks for
+        fake = tmp_path / "bin" / name
+        fake.write_text("#!/usr/bin/env bash\nexit 1\n")
+        fake.chmod(0o755)
     done = box(check=False)
     assert done.returncode != 0 and "python 3.12" in done.stderr
 
@@ -276,6 +279,6 @@ def test_ac1_make_bundle_packs_the_default_branch_and_tags_but_no_worktree_refs(
         assert not [r for r in refs if "worktrees/" in r]
         return refs
 
-    assert heads() == ["refs/heads/master", "refs/remotes/origin/master", "refs/tags/v1"]
+    assert heads() == ["refs/heads/master", "refs/remotes/origin/HEAD", "refs/remotes/origin/master", "refs/tags/v1"]
     everything = heads("--all-branches")
     assert "refs/remotes/origin/unmerged" in everything and "refs/remotes/origin/wt-branch" in everything

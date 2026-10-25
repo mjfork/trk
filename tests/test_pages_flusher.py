@@ -446,6 +446,70 @@ def test_timer_without_trk_home_leaves_the_environment_out(trk, units, monkeypat
     assert "Environment=" not in (unit_dir / "trk-pages.service").read_text()
 
 
+@pytest.fixture
+def agents(tmp_path, monkeypatch):
+    """macOS: a temp LaunchAgents folder and a stub `launchctl` that logs its arguments and reports the
+    agent loaded while its plist exists."""
+    folder = tmp_path / "LaunchAgents"
+    monkeypatch.setenv("TRK_LAUNCH_AGENTS", str(folder))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(timer, "launchd", lambda: True)
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    calls = tmp_path / "launchctl.log"
+    stub = stub_dir / "launchctl"
+    stub.write_text(f"""#!/bin/sh
+echo "$*" >> {calls}
+case "$1" in print) [ -f {folder}/com.trk.pages.plist ] || exit 113 ;; esac
+exit 0
+""")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(timer, "trk_path", lambda: "/opt/trk bin/trk")
+
+    def log():
+        return calls.read_text().splitlines() if calls.exists() else []
+
+    return folder, log
+
+
+def test_on_macos_the_timer_is_a_launchd_agent(trk, trk_home, agents, tmp_path):
+    import plistlib
+    folder, log = agents
+    result = trk("pages", "timer", "install", "--json")
+    assert result.code == 0, result.err
+    agent = plistlib.loads((folder / "com.trk.pages.plist").read_bytes())
+    assert agent["Label"] == "com.trk.pages" and agent["StartInterval"] == 60
+    assert agent["ProgramArguments"] == ["/opt/trk bin/trk", "pages", "tick"]
+    assert agent["EnvironmentVariables"]["TRK_HOME"] == str(trk_home)
+    assert agent["EnvironmentVariables"]["PATH"].startswith("/opt/trk bin" + os.pathsep)
+    assert agent["StandardOutPath"] == str(tmp_path / "state/trk/pages-timer.log")
+    uid = os.getuid()
+    assert log()[:2] == [f"bootout gui/{uid}/com.trk.pages", f"bootstrap gui/{uid} {folder}/com.trk.pages.plist"]
+    assert result.json() == {
+        "schema": 1, "unit_dir": str(folder), "installed": True, "enabled": "enabled", "active": "active",
+        "exec_start": "'/opt/trk bin/trk' pages tick", "trk_home": str(trk_home)}
+    assert "timer com.trk.pages.plist in" in trk("pages", "timer", "status").out
+
+
+def test_on_macos_remove_unloads_and_deletes_the_agent(trk, trk_home, agents):
+    folder, log = agents
+    assert trk("pages", "timer", "install").code == 0
+    before = len(log())
+    result = trk("pages", "timer", "remove", "--json")
+    assert result.code == 0, result.err
+    assert result.json()["removed"] == ["com.trk.pages.plist"] and result.json()["installed"] is False
+    assert result.json()["active"] == "inactive" and not (folder / "com.trk.pages.plist").exists()
+    assert log()[before] == f"bootout gui/{os.getuid()}/com.trk.pages"
+    assert trk("pages", "timer", "remove", "--json").json()["removed"] == []
+
+
+def test_on_macos_a_test_never_touches_the_real_launch_agents(trk, trk_home, agents, monkeypatch):
+    monkeypatch.delenv("TRK_LAUNCH_AGENTS")
+    result = trk("pages", "timer", "install")
+    assert result.code != 0 and "TRK_LAUNCH_AGENTS" in result.err
+
+
 def test_a_failing_systemctl_is_refused(trk, units, monkeypatch):
     real = timer.systemctl  # every call made as `systemctl --user fail-me`, which the stub fails
     monkeypatch.setattr(timer, "systemctl", lambda *argv, check=True: real("fail-me", check=check))

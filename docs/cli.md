@@ -1209,8 +1209,8 @@ positional arguments:
     tidy                resolve the threads of asks already closed, on one
                         page
     tick                pull, then flush (the timer's command)
-    timer               the systemd user timer that runs `trk pages tick`
-                        every minute
+    timer               the timer that runs `trk pages tick` every minute (a
+                        systemd user timer; a launchd agent on macOS)
     render              render one item's page locally, without network
     republish           send an item's whole page again, ignoring the stored
                         hashes (repair)
