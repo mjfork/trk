@@ -68,8 +68,8 @@ options:
 ```text
 usage: trk ask [-h] [--as ACTOR] [--session SESSION] [--json] --to ROLE
                [--question @FILE|-] [--urgent] [--option LABEL]
-               [--recommend N] [--ledger N]
-               [--first | --last | --before ID | --after ID]
+               [--recommend N] [--ledger N] [--first | --last | --before ID |
+               --after ID]
                ID title
 
 positional arguments:
@@ -142,8 +142,8 @@ options:
 
 ```text
 usage: trk answer [-h] [--as ACTOR] [--session SESSION] [--json]
-                  [--outcome TEXT] [--option N]
-                  [--answer @FILE|- | --from-comment COMMENT]
+                  [--outcome TEXT] [--option N] [--answer @FILE|- |
+                  --from-comment COMMENT]
                   id
 
 positional arguments:
@@ -185,8 +185,8 @@ options:
 ## trk withdraw
 
 ```text
-usage: trk withdraw [-h] [--as ACTOR] [--session SESSION] [--json] --reason
-                    TEXT
+usage: trk withdraw [-h] [--as ACTOR] [--session SESSION] [--json]
+                    --reason TEXT
                     id
 
 positional arguments:
@@ -205,8 +205,8 @@ options:
 ```text
 usage: trk edit [-h] [--as ACTOR] [--session SESSION] [--json] [--title TITLE]
                 [--owner ACTOR | --no-owner] [--client NAME|none]
-                [--archive PATH|none] [--urgent | --no-urgent]
-                [--jira URL | --no-jira] [--add-repo R] [--remove-repo R]
+                [--archive PATH|none] [--urgent | --no-urgent] [--jira URL |
+                --no-jira] [--add-repo R] [--remove-repo R]
                 id
 
 positional arguments:
@@ -263,9 +263,8 @@ options:
 ## trk move
 
 ```text
-usage: trk move [-h] [--as ACTOR] [--session SESSION] [--json]
-                [--parent ID | --top]
-                [--first | --last | --before ID | --after ID]
+usage: trk move [-h] [--as ACTOR] [--session SESSION] [--json] [--parent ID |
+                --top] [--first | --last | --before ID | --after ID]
                 id
 
 positional arguments:
@@ -287,9 +286,9 @@ options:
 ## trk close
 
 ```text
-usage: trk close [-h] [--as ACTOR] [--session SESSION] [--json] --resolution
-                 {done,wont-do,superseded,out-of-scope,duplicate} --outcome
-                 TEXT [--by ID] [--of ID]
+usage: trk close [-h] [--as ACTOR] [--session SESSION] [--json]
+                 --resolution {done,wont-do,superseded,out-of-scope,duplicate}
+                 --outcome TEXT [--by ID] [--of ID]
                  id
 
 positional arguments:
@@ -550,8 +549,8 @@ options:
 ## trk actor add
 
 ```text
-usage: trk actor add [-h] [--as ACTOR] [--session SESSION] [--json] --kind
-                     {human,agent} [--display DISPLAY]
+usage: trk actor add [-h] [--as ACTOR] [--session SESSION] [--json]
+                     --kind {human,agent} [--display DISPLAY]
                      id
 
 positional arguments:
@@ -569,8 +568,8 @@ options:
 ## trk actor edit
 
 ```text
-usage: trk actor edit [-h] [--as ACTOR] [--session SESSION] [--json] --display
-                      DISPLAY
+usage: trk actor edit [-h] [--as ACTOR] [--session SESSION] [--json]
+                      --display DISPLAY
                       id
 
 positional arguments:
@@ -693,8 +692,8 @@ options:
 ## trk worktree set
 
 ```text
-usage: trk worktree set [-h] [--as ACTOR] [--session SESSION] [--json] --path
-                        P [--branch B]
+usage: trk worktree set [-h] [--as ACTOR] [--session SESSION] [--json]
+                        --path P [--branch B]
                         id
 
 positional arguments:
@@ -891,8 +890,8 @@ options:
 ## trk comment reply
 
 ```text
-usage: trk comment reply [-h] [--as ACTOR] [--session SESSION] [--json] --body
-                         @file|-
+usage: trk comment reply [-h] [--as ACTOR] [--session SESSION] [--json]
+                         --body @file|-
                          COMMENT
 
 positional arguments:
@@ -1143,9 +1142,10 @@ See also `trk evidence add` and `trk evidence retract`.
 ## trk evidence add
 
 ```text
-usage: trk evidence add [-h] [--as ACTOR] [--session SESSION] [--json] --kind
-                        K --gate G [--criterion ac-N] [--ref R] [--sha S]
-                        [--verdict {pass,fail}] [--red-first] --note TEXT
+usage: trk evidence add [-h] [--as ACTOR] [--session SESSION] [--json]
+                        --kind K --gate G [--criterion ac-N] [--ref R]
+                        [--sha S] [--verdict {pass,fail}] [--red-first]
+                        --note TEXT
                         id
 
 positional arguments:
@@ -1194,13 +1194,12 @@ options:
 
 ```text
 usage: trk pages [-h] [--json] [--dirty] [--errors]
-                 {setup,flush,pull,authors,reply,tidy,tick,timer,render,republish}
-                 ...
+                 {setup,flush,pull,authors,reply,tidy,tick,timer,render,republish} ...
 
 positional arguments:
   {setup,flush,pull,authors,reply,tidy,tick,timer,render,republish}
-    setup               configure publishing and check the backend (a token is
-                        never stored or printed)
+    setup               configure publishing and check the page adapter (trk
+                        stores no secret)
     flush               publish due pages
     pull                run the comment pull and the outbox
     authors             author ids seen on page comments and their linked
@@ -1228,26 +1227,18 @@ options:
 
 ```text
 usage: trk pages setup [-h] [--as ACTOR] [--session SESSION] [--json]
-                       [--backend NAME] [--dir PATH] [--base-url URL]
-                       [--token-file PATH] [--expires YYYY-MM-DD] --home ID
-                       [--team SLUG]
+                       [--adapter COMMAND] --home ID [--team SLUG]
 
 options:
-  -h, --help            show this help message and exit
-  --as ACTOR            writing actor
-  --session SESSION     writing session id
-  --json                print JSON
-  --backend NAME        where pages go: folder (built in) or an installed
-                        backend (default: as set)
-  --dir PATH            folder: the directory the pages are written to
-  --base-url URL        a token backend's service, https://…; folder: where
-                        --dir is served (optional)
-  --token-file PATH     a token backend's `tracker` token, mode 0600 (default
-                        ~/.config/trk/token)
-  --expires YYYY-MM-DD  a token backend's token expiry date
-  --home ID             the open item the publisher's asks sit under
-  --team SLUG           the team every page is shared on (default: as set,
-                        tracker)
+  -h, --help         show this help message and exit
+  --as ACTOR         writing actor
+  --session SESSION  writing session id
+  --json             print JSON
+  --adapter COMMAND  the page adapter's command line, e.g. "trk-pages-folder
+                     --dir PATH" (default: as set)
+  --home ID          the open item the publisher's asks sit under
+  --team SLUG        the team every page is shared on (default: as set,
+                     tracker)
 ```
 
 ## trk pages flush
@@ -1516,8 +1507,8 @@ options:
 ## trk ledger audit
 
 ```text
-usage: trk ledger audit [-h] [--as ACTOR] [--session SESSION] [--json] --note
-                        TEXT
+usage: trk ledger audit [-h] [--as ACTOR] [--session SESSION] [--json]
+                        --note TEXT
                         id
 
 positional arguments:
@@ -1553,8 +1544,8 @@ options:
 ## trk ledger promote
 
 ```text
-usage: trk ledger promote [-h] [--as ACTOR] [--session SESSION] [--json] --adr
-                          PATH
+usage: trk ledger promote [-h] [--as ACTOR] [--session SESSION] [--json]
+                          --adr PATH
                           id N
 
 positional arguments:

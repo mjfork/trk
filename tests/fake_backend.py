@@ -1,4 +1,8 @@
-"""An in-process fake page backend with comments, registered as backend `fake` (see `trk.publisher`).
+"""An in-process fake page adapter with comments (see `trk.publisher` and `trk.adapter`).
+
+`runner()` gives an `adapter._runner` that serves the command `fake-adapter --token-file PATH` in this
+process through `trk.adapter.serve`, as a real adapter program would: the client reads its token from
+that file on every run, and the fake checks it.
 
 It models what the publisher relies on: slugs, versions and tags; team at publish; `base_version`
 conflicts with `changedSections`; all-or-nothing patches by `data-comment-id` (duplicate or unknown
@@ -25,9 +29,11 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 
-from trk.publisher import ConnectionFailure, HttpFailure, Refused, Unauthorized
+from trk import adapter
+from trk.publisher import ConnectionFailure, Held, HttpFailure, Refused
 
 BASE_URL = "https://pages.fake.test"
+EXPIRES = "2027-10-01"
 TOKEN = SECRET = "tok_fake-secret-0123456789"
 OWNER_ID = "u-owner"
 OWNER_NAME = "Michael Fork"
@@ -60,13 +66,13 @@ class FakeBackend:
     (settings, token) gives a client bound to this state."""
 
     NAME = "fake"
-    TOKEN = True
     COMMENTS = True
-    GRANTS = tuple(sorted(TRACKER_GRANTS | {ACTIVITY}))
+    COMMAND = "fake-adapter"
 
     def __init__(self, *, token=SECRET, grants=TRACKER_GRANTS, teams=("tracker",), author_ids=True,
-                 base_url=BASE_URL, activity=False):
+                 base_url=BASE_URL, activity=False, expires=EXPIRES):
         self.token = token
+        self.expires = expires  # what `describe` says the credentials' expiry is
         self.grants = set(grants)
         self.teams = set(teams)
         self.author_ids = author_ids
@@ -85,6 +91,20 @@ class FakeBackend:
 
     def __call__(self, settings, token):
         return FakeClient(self, settings, token)
+
+    def runner(self):
+        """An `adapter._runner` serving `fake-adapter --token-file PATH` from this state."""
+        return adapter.in_process(self._from_argv)
+
+    def _from_argv(self, argv):
+        if argv[:1] != [self.COMMAND] or len(argv) != 3 or argv[1] != "--token-file":
+            raise Held(f"usage: {self.COMMAND} --token-file PATH")
+        try:
+            with open(argv[2], encoding="utf-8") as f:
+                token = f.read().strip()
+        except OSError as exc:
+            raise Held(f"cannot read the token file {argv[2]}: {exc.strerror or exc}") from None
+        return FakeClient(self, {"base_url": self.base_url}, token)
 
     # ----- test controls -------------------------------------------------------------------
 
@@ -157,7 +177,7 @@ class FakeBackend:
         if fault == "500":
             raise HttpFailure(f"{name}: HTTP 500 from the page backend", 500, ambiguous=True)
         if fault == "401" or token != self.token:
-            raise Unauthorized(f"{name}: {Unauthorized.SUFFIX}")
+            raise Held(f"{name}: the host rejected the token (HTTP 401)")
         if base_url != self.base_url:
             raise HttpFailure(f"{name}: HTTP 404 from the page backend", 404)
         if name not in ALWAYS_ALLOWED and name not in self.grants:
@@ -368,16 +388,17 @@ class FakeBackend:
 class FakeClient:
     """What `trk pages` calls: the backend interface, over the fake's state."""
 
-    NAME, TOKEN, COMMENTS, GRANTS = FakeBackend.NAME, FakeBackend.TOKEN, FakeBackend.COMMENTS, FakeBackend.GRANTS
+    NAME, COMMENTS = FakeBackend.NAME, FakeBackend.COMMENTS
 
     def __init__(self, service, settings, token):
         self.service, self.base_url, self._token = service, settings.get("base_url"), token
 
+    @property
+    def expires(self):
+        return self.service.expires
+
     def _call(self, name, **arguments):
         return self.service.call(name, arguments, token=self._token, base_url=self.base_url)
-
-    def uses(self, token):
-        return self._token == token
 
     def check(self):
         return self._call("check")

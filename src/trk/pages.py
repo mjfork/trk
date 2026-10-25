@@ -1,115 +1,66 @@
-"""Publishing settings and page bookkeeping: `pages setup`, the page list, the token, shells and
+"""Publishing settings and page bookkeeping: `pages setup`, the page list, the adapter client, shells and
 diffing, and marking the pages each journal row affects.
 
-Loaded only by the `pages` verbs. The token secret is never stored in `store.db` and never printed:
-it is read from the file setup names (mode 0600 or stricter), or from $TRK_ARTIFACT_TOKEN in a
-foreground run. Settings changes are journaled `config.changed`; the page bookkeeping tables and
-`publish_cursor` are publisher state and are not.
+Loaded only by the `pages` verbs. trk stores no secret: the page adapter (docs/adapters.md) keeps its own
+credentials, and its command line names where they are, never the secret itself. Settings changes are
+journaled `config.changed`; the page bookkeeping tables, `publish_cursor`, the adapter's `describe` answer
+and the setup's id are publisher state and are not.
 """
 
 import hashlib
 import json
-import os
 import re
-import stat
-import urllib.parse
+import uuid
 from datetime import date, timedelta
 
-from . import clock, items, needs_you, publisher, render, renewal, spawn
+from . import adapter, clock, items, needs_you, publisher, render, renewal, spawn
 from .errors import refused, usage
 from .render import page_kind
 
-DEFAULT_TOKEN_FILE = "~/.config/trk/token"
-TOKEN_ENV = "TRK_ARTIFACT_TOKEN"
 # CLI/feed spelling -> meta key, in the order setup journals them.
-SETTINGS = (("publish-backend", "publish_backend"), ("publish-base-url", "publish_base_url"),
-            ("publish-dir", "publish_dir"), ("publish-token-file", "publish_token_file"),
-            ("publish-team", "publish_team"), ("publish-token-expires", "publish_token_expires"),
-            ("publish-home", "publish_home"))
+SETTINGS = (("publish-adapter", "publish_adapter"), ("publish-team", "publish_team"),
+            ("publish-expires", "publish_expires"), ("publish-home", "publish_home"))
+DESCRIBED_KEY = "publish_described"  # the adapter's `describe` answer at setup: {name, capabilities, expires?}
+SETUP_KEY = "publish_setup"  # a new id per setup: a refusal to a client made before it holds nothing
 
 
-def backend_name(st):
-    """The configured page backend's name, or None before setup. A store set up before backends had
-    names has none until `trk pages setup --backend NAME` runs once more."""
-    return st.meta("publish_backend") or None
+def adapter_command(st):
+    """The configured adapter's command line, or None before setup. A store set up before adapters
+    has none until `trk pages setup --adapter COMMAND` runs."""
+    return st.meta("publish_adapter") or None
 
 
 def is_set_up(st):
-    return backend_name(st) is not None
+    return adapter_command(st) is not None
 
 
 def require_set_up(st):
     """flush, pull and tick refuse until setup has run (rule `publishing-not-set-up`)."""
     if not is_set_up(st):
-        raise refused("publishing-not-set-up", "publishing is not set up: run `trk pages setup --backend folder "
-                                               "--dir PATH --home ID` (or another backend) first")
+        raise refused("publishing-not-set-up", "publishing is not set up: run `trk pages setup --adapter "
+                                               "\"trk-pages-folder --dir PATH\" --home ID` (or another adapter) first")
 
 
-def backend_class(name):
-    """The installed backend class `name` (rule `no-backend` when none is)."""
+def described(st):
+    """The adapter's `describe` answer as setup stored it."""
     try:
-        return publisher.load(name)
-    except LookupError as exc:
-        raise refused("no-backend", str(exc)) from None
+        value = json.loads(st.meta(DESCRIBED_KEY) or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
-def _settings(st):
-    return {"base_url": st.meta("publish_base_url"), "dir": st.meta("publish_dir"), "team": st.meta("publish_team")}
+def client(st):
+    """A Client for the configured adapter."""
+    return adapter.Client(adapter_command(st), described=described(st), setup_id=st.meta(SETUP_KEY))
 
 
-def token_file_path(raw):
-    """The absolute path of a token file whose mode lets no one but its owner read it (rule
-    `token-file-mode`); a missing file is a usage error."""
-    path = os.path.abspath(os.path.expanduser(raw))
+def _check_command(command):
     try:
-        mode = os.stat(path).st_mode
-    except OSError as exc:
-        raise usage(f"cannot read the token file {path}: {exc.strerror or exc}") from None
-    if not stat.S_ISREG(mode):
-        raise usage(f"the token file {path} is not a regular file")
-    if stat.S_IMODE(mode) & 0o077:
-        raise refused("token-file-mode", f"the token file {path} has mode {stat.S_IMODE(mode):04o}; "
-                                         f"it must be readable by its owner only: chmod 600 {path}")
-    return path
-
-
-def read_token(path, *, foreground):
-    """The token secret. $TRK_ARTIFACT_TOKEN overrides the file only in a foreground run (and tests):
-    the detached flusher and the timer always read the file."""
-    if foreground and os.environ.get(TOKEN_ENV):
-        return os.environ[TOKEN_ENV].strip()
-    try:
-        with open(path, encoding="utf-8") as f:
-            token = f.read().strip()
-    except OSError as exc:
-        raise usage(f"cannot read the token file {path}: {exc.strerror or exc}") from None
-    if not token:
-        raise usage(f"the token file {path} is empty")
-    return token
-
-
-def client(st, *, foreground):
-    """The configured backend, holding its token (if it takes one) in memory only."""
-    cls = backend_class(backend_name(st))
-    token = read_token(token_file_path(st.meta("publish_token_file")), foreground=foreground) if cls.TOKEN else None
-    return cls(_settings(st), token)
-
-
-def _check_base_url(url):
-    """An https URL; plain http only to this machine, since the bearer token travels with every call."""
-    parsed = urllib.parse.urlsplit(url)
-    local = parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1")
-    if not parsed.hostname or not (parsed.scheme == "https" or local):
-        raise usage(f"--base-url must be an https URL (http only for localhost), not {url!r}")
-    return url.rstrip("/")
-
-
-def _check_served_url(url):
-    """Where a folder backend's directory is served: an http, https or file URL."""
-    parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme not in ("http", "https", "file") or (parsed.scheme != "file" and not parsed.hostname):
-        raise usage(f"--base-url must be an http, https or file URL, not {url!r}")
-    return url.rstrip("/")
+        adapter.split(command)
+    except ValueError as exc:
+        raise usage(f"--adapter must name the adapter's command: {exc}") from None
+    return command.strip()
 
 
 def _check_expires(text):
@@ -118,7 +69,8 @@ def _check_expires(text):
             raise ValueError(text)
         return date.fromisoformat(text).isoformat()
     except ValueError:
-        raise usage(f"--expires must be a date as YYYY-MM-DD, not {text!r}") from None
+        raise refused("adapter-check-failed", f"the adapter's `expires` must be a date as YYYY-MM-DD, "
+                                              f"not {text!r}") from None
 
 
 def _check_home(conn, raw_id):
@@ -130,65 +82,55 @@ def _check_home(conn, raw_id):
     return row["id"]
 
 
-def setup(st, actor, *, backend, base_url, token_file, expires, home, team, folder=None):
-    """Configure publishing: check the backend live with one `check` call (outside any transaction), then
-    store the settings, journaling `config.changed` per changed key. A backend with a token (`TOKEN`)
-    needs `base_url`, `token_file` and `expires`, and is checked with the file's token; the `folder`
-    backend needs `folder`, the directory, and takes `base_url` as where that directory is served. The
-    first setup also sets `publish_cursor` to the journal head, because every item is already dirty
-    by having no `pages` row; a later setup (a token renewal) keeps the cursor it has, so no row
-    waiting to be marked is skipped. The same transaction lifts a 401's hold on page writes and answers
-    the open renewal ask (see `renewal.on_setup`). Returns what was configured, the keys that changed
-    and what became of the renewal ask."""
-    name = backend or backend_name(st)
-    if not name:
-        raise usage(f"--backend must name a page backend ({', '.join(publisher.names())})")
-    cls = backend_class(name)
+def setup(st, actor, *, command, home, team):
+    """Configure publishing: check the adapter live with one `describe` call (outside any transaction),
+    then store the settings, journaling `config.changed` per changed key. `command` defaults to the
+    adapter already set. The expiry is the one `describe` gave, if any. The first setup also sets
+    `publish_cursor` to the journal head, because every item is already dirty by having no `pages` row;
+    a later setup (a renewal) keeps the cursor it has, so no row waiting to be marked is skipped. The
+    same transaction lifts a hold on page writes and answers the open renewal ask (see
+    `renewal.on_setup`). Returns what was configured, the keys that changed and what became of the
+    renewal ask."""
+    command = command or adapter_command(st)
+    if not command:
+        raise usage("--adapter must name the adapter's command, e.g. \"trk-pages-folder --dir PATH\"")
+    command = _check_command(command)
     team = st.meta("publish_team") if team is None else team
     if not team or not team.strip():
         raise usage("--team must name the team every page is shared on")
-    values = {"publish_backend": name, "publish_team": team}
-    if cls.TOKEN:
-        if not base_url or not expires:
-            raise usage(f"the {name} backend needs --base-url, --token-file and --expires")
-        values["publish_base_url"] = _check_base_url(base_url)
-        values["publish_token_expires"] = _check_expires(expires)
-        values["publish_token_file"] = token_file_path(token_file)
-        # the file the flusher and timer will read, never the override
-        token = read_token(values["publish_token_file"], foreground=False)
-    else:
-        if not folder:
-            raise usage(f"the {name} backend needs --dir")
-        values["publish_dir"] = os.path.abspath(os.path.expanduser(folder))
-        if base_url:
-            values["publish_base_url"] = _check_served_url(base_url)
-        token = None
     _check_home(st.conn, home)
-    where = values.get("publish_base_url") or values.get("publish_dir")
     try:
-        cls({"base_url": values.get("publish_base_url"), "dir": values.get("publish_dir"), "team": team}, token).check()
+        answer = adapter.Client(command).check()
     except publisher.ServiceError as exc:
-        rule = "token-check-failed" if cls.TOKEN else "backend-check-failed"
-        raise refused(rule, f"the {name} backend's check against {where} failed: {exc}") from None
+        raise refused("adapter-check-failed", f"the adapter check failed: {exc}") from None
+    expires = _check_expires(answer["expires"]) if answer.get("expires") else None
+    values = {"publish_adapter": command, "publish_team": team, "publish_expires": expires}
     changed = []
     with st.transaction(actor) as tx:
         values["publish_home"] = _check_home(tx.conn, home)  # again, under the write lock
         for spelling, key in SETTINGS:
             old = tx.store.meta(key)
-            if key not in values or old == values[key]:
+            if old == values[key] or (old in (None, "") and values[key] is None):
                 continue
-            tx.conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) "
-                            "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, values[key]))
+            if values[key] is None:
+                tx.conn.execute("DELETE FROM meta WHERE key = ?", (key,))
+            else:
+                _set(tx.conn, key, values[key])
             tx.journal("config.changed", {}, data={"key": spelling, "old": old, "new": values[key]})
             changed.append(spelling)
+        _set(tx.conn, DESCRIBED_KEY, json.dumps(answer, sort_keys=True))
+        _set(tx.conn, SETUP_KEY, uuid.uuid4().hex)
         if tx.store.meta("publish_cursor") is None:
             head = tx.conn.execute("SELECT COALESCE(MAX(seq), 0) FROM journal").fetchone()[0]
             tx.conn.execute("INSERT INTO meta (key, value) VALUES ('publish_cursor', ?)", (str(head),))
-        renewal_ask = renewal.on_setup(tx, actor, values.get("publish_token_expires"))
-    return {"backend": name, "base_url": values.get("publish_base_url"), "dir": values.get("publish_dir"),
-            "token_file": values.get("publish_token_file"), "team": team,
-            "expires": values.get("publish_token_expires"), "home": values["publish_home"], "changed": changed,
-            "renewal_ask": renewal_ask}
+        renewal_ask = renewal.on_setup(tx, actor, expires)
+    return {"adapter": command, "name": answer["name"], "capabilities": answer["capabilities"], "team": team,
+            "expires": expires, "home": values["publish_home"], "changed": changed, "renewal_ask": renewal_ask}
+
+
+def _set(conn, key, value):
+    conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                 (key, value))
 
 
 def page_rows(conn):

@@ -8,7 +8,6 @@ import threading
 
 import pytest
 
-from fake_backend import TOKEN
 from gated import DEST
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_pull import RECEIVED, TABLE, body, confirm, dispositions, mode, pulled, replies, slug  # noqa: F401
@@ -169,7 +168,6 @@ def test_ac2_two_ticks_racing_over_both_pages_reply_once_each(trk, trk_home, mod
         return real(name, arguments, **kwargs)
 
     monkeypatch.setattr(fake, "call", slow)
-    monkeypatch.setenv("TRK_ARTIFACT_TOKEN", TOKEN)
     reports, errors = [], []
 
     def run():
@@ -177,7 +175,7 @@ def test_ac2_two_ticks_racing_over_both_pages_reply_once_each(trk, trk_home, mod
         try:
             from trk import pages
 
-            reports.append(pull.pull(st, pages.client(st, foreground=True)))
+            reports.append(pull.pull(st, pages.client(st)))
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
         finally:

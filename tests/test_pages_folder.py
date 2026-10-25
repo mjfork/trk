@@ -1,12 +1,20 @@
-"""The built-in `folder` page backend: `trk pages setup --backend folder` writes every page as an HTML
-file in a directory, with no token and no comments."""
+"""The reference page adapter `trk-pages-folder` (trk.folder): `trk pages setup --adapter "trk-pages-folder
+--dir PATH"` writes every page as an HTML file in a directory, with no credentials and no comments. The
+adapter runs as a real child process, as trk runs any adapter."""
 
 import json
+import re
+import shlex
+import sys
 
 import pytest
 
 from test_pages_setup import ME, journal, tree  # noqa: F401 (fixtures)
-from trk import folder, publisher
+from trk import adapter, folder, publisher
+
+
+def command(out, *extra):
+    return shlex.join([sys.executable, "-m", "trk.folder", "--dir", str(out), *extra])
 
 
 @pytest.fixture
@@ -16,7 +24,7 @@ def out(tmp_path):
 
 @pytest.fixture
 def live(trk, tree, out):
-    result = trk("pages", "setup", "--backend", "folder", "--dir", str(out), "--home", tree["P"], "--json")
+    result = trk("pages", "setup", "--adapter", command(out), "--home", tree["P"], "--json")
     assert result.code == 0, result.err
     return tree
 
@@ -27,25 +35,33 @@ def flush(trk, *extra):
     return result.json()
 
 
-def test_setup_journals_the_backend_and_the_directory_and_needs_no_token(trk, trk_home, tree, out):
-    result = trk("pages", "setup", "--backend", "folder", "--dir", str(out), "--home", tree["P"], "--json")
+def test_setup_journals_the_adapter_and_needs_no_credentials(trk, trk_home, tree, out):
+    result = trk("pages", "setup", "--adapter", command(out), "--home", tree["P"], "--json")
     assert result.code == 0, result.err
     done = result.json()
-    assert (done["backend"], done["dir"], done["token_file"], done["expires"]) == ("folder", str(out), None, None)
-    keys = [json.loads(row["data"])["key"] for row in journal(trk_home) if row["change"] == "config.changed"]
-    assert keys[-3:] == ["publish-backend", "publish-dir", "publish-home"]
+    assert (done["name"], done["capabilities"], done["expires"]) == ("folder", [], None)
+    rows = [json.loads(row["data"]) for row in journal(trk_home) if row["change"] == "config.changed"]
+    assert [row["key"] for row in rows[-2:]] == ["publish-adapter", "publish-home"]
+    assert rows[-2]["new"] == command(out)
     assert out.is_dir()  # the check made it
 
 
-def test_setup_needs_a_directory(trk, tree):
-    result = trk("pages", "setup", "--backend", "folder", "--home", tree["P"])
-    assert result.code == 2 and "--dir" in result.err
+def test_setup_needs_an_adapter(trk, tree):
+    result = trk("pages", "setup", "--home", tree["P"])
+    assert result.code == 2 and "--adapter" in result.err
 
 
-def test_an_unknown_backend_is_refused(trk, tree):
-    result = trk("pages", "setup", "--backend", "nope", "--dir", "/tmp/x", "--home", tree["P"], "--json")
-    assert result.code == 1 and result.error()["rule"] == "no-backend"
-    assert "folder" in result.error()["message"]
+def test_a_folder_adapter_without_a_directory_is_refused(trk, tree):
+    result = trk("pages", "setup", "--adapter", shlex.join([sys.executable, "-m", "trk.folder"]), "--home", tree["P"],
+                 "--json")
+    assert result.code == 1 and result.error()["rule"] == "adapter-check-failed"
+    assert "--dir" in result.error()["message"]
+
+
+def test_a_program_that_cannot_run_is_refused(trk, tree):
+    result = trk("pages", "setup", "--adapter", "no-such-adapter-anywhere --x", "--home", tree["P"], "--json")
+    assert result.code == 1 and result.error()["rule"] == "adapter-check-failed"
+    assert "cannot run no-such-adapter-anywhere" in result.error()["message"]
 
 
 def test_a_flush_writes_every_page_with_links_between_them(trk, live, out):
@@ -56,7 +72,6 @@ def test_a_flush_writes_every_page_with_links_between_them(trk, live, out):
     index = json.loads((out / folder.INDEX).read_text())
     assert index[live["P"]]["tag"] == f"trk:{live['P']}"
     j = (out / f"{live['J']}.html").read_text()
-    import re
     assert (out / f"{live['P']}.html").resolve().as_uri() in re.findall(r'href="([^"#]+)', j), re.findall(r'href="([^"]+)', j)
 
 
@@ -72,7 +87,7 @@ def test_an_edit_rewrites_only_its_pages_and_bumps_their_versions(trk, live, out
 
 
 def test_a_served_directory_links_by_its_url(trk, tree, out):
-    assert trk("pages", "setup", "--backend", "folder", "--dir", str(out), "--base-url", "https://pages.example/trk/",
+    assert trk("pages", "setup", "--adapter", command(out, "--base-url", "https://pages.example/trk/"),
                "--home", tree["P"]).code == 0
     flush(trk)
     assert f'href="https://pages.example/trk/{tree["P"]}.html"' in (out / f"{tree['J']}.html").read_text()
@@ -88,7 +103,7 @@ def test_pull_and_tick_never_read_comments(trk, live, out):
 
 
 def test_a_patch_replaces_only_the_named_handles(tmp_path):
-    backend = folder.Backend({"dir": str(tmp_path)})
+    backend = folder.Backend(str(tmp_path))
     page = '<html><body><section data-comment-id="a"><p>one</p></section><section data-comment-id="b">two</section></body></html>'
     made = backend.publish(title="T", body=page, team="tracker", tags=["trk:tr-x"])
     done = backend.update(made["slug"], base_version=1, edits=[{"section": "b", "replace": '<section data-comment-id="b">2</section>'}])
@@ -102,8 +117,31 @@ def test_a_patch_replaces_only_the_named_handles(tmp_path):
         "sections": [{"id": "a", "source": '<section data-comment-id="a"><p>one</p></section>'}], "missing": ["zz"]}
 
 
+def test_a_title_alone_is_a_new_version_on_the_current_one(tmp_path):
+    backend = folder.Backend(str(tmp_path))
+    made = backend.publish(title="T", body="<p>x</p>", team="tracker", tags=["trk:tr-x"])
+    assert backend.update(made["slug"], base_version=1, title="T2")["version"] == 2
+    with pytest.raises(publisher.Refused) as caught:
+        backend.update(made["slug"], base_version=1, title="T3")
+    assert caught.value.error == "conflict"
+    assert json.loads((tmp_path / folder.INDEX).read_text())["tr-x"]["title"] == "T2"
+
+
 def test_a_directory_that_cannot_be_written_fails_the_check(trk, tree, tmp_path):
     blocked = tmp_path / "file"
     blocked.write_text("not a directory")
-    result = trk("pages", "setup", "--backend", "folder", "--dir", str(blocked / "pages"), "--home", tree["P"], "--json")
-    assert result.code == 1 and result.error()["rule"] == "backend-check-failed"
+    result = trk("pages", "setup", "--adapter", command(blocked / "pages"), "--home", tree["P"], "--json")
+    assert result.code == 1 and result.error()["rule"] == "adapter-check-failed"
+
+
+def test_the_installed_script_speaks_the_protocol(tmp_path):
+    client = adapter.Client(command(tmp_path / "pages"))
+    assert client.check() == {"name": "folder", "capabilities": []}
+    made = client.publish(title="T", body="<p>x</p>", team="tracker", tags=["trk:tr-x"])
+    assert client.find_tagged("trk:tr-x") == made
+    with pytest.raises(publisher.Refused) as caught:
+        client.update(made["slug"], base_version=7, body="<p>y</p>")
+    assert caught.value.error == "conflict" and caught.value.payload["currentVersion"] == 1
+    with pytest.raises(publisher.Refused) as caught:
+        client.list_comments(made["slug"])
+    assert caught.value.error == "unknown_verb"

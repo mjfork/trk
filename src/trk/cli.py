@@ -431,15 +431,9 @@ def build_parser():
     pages.set_defaults(handler=cmd_pages)
     pages_verbs = pages.add_subparsers(dest="pages_verb", parser_class=Parser)
     pages_setup = pages_verbs.add_parser("setup", parents=[common],
-                                         help="configure publishing and check the backend (a token is never stored or printed)")
-    pages_setup.add_argument("--backend", metavar="NAME",
-                             help="where pages go: folder (built in) or an installed backend (default: as set)")
-    pages_setup.add_argument("--dir", metavar="PATH", help="folder: the directory the pages are written to")
-    pages_setup.add_argument("--base-url", metavar="URL",
-                             help="a token backend's service, https://…; folder: where --dir is served (optional)")
-    pages_setup.add_argument("--token-file", default=None, metavar="PATH",
-                             help="a token backend's `tracker` token, mode 0600 (default ~/.config/trk/token)")
-    pages_setup.add_argument("--expires", metavar="YYYY-MM-DD", help="a token backend's token expiry date")
+                                         help="configure publishing and check the page adapter (trk stores no secret)")
+    pages_setup.add_argument("--adapter", metavar="COMMAND",
+                             help="the page adapter's command line, e.g. \"trk-pages-folder --dir PATH\" (default: as set)")
     pages_setup.add_argument("--home", required=True, metavar="ID", help="the open item the publisher's asks sit under")
     pages_setup.add_argument("--team", metavar="SLUG", help="the team every page is shared on (default: as set, tracker)")
     pages_setup.set_defaults(handler=cmd_pages_setup)
@@ -1447,27 +1441,22 @@ def cmd_pages_setup(args):
     st = store.open_store()
     try:
         actor = store.resolve_actor(st, args.as_actor)
-        done = pages.setup(st, actor, backend=args.backend, base_url=args.base_url,
-                           token_file=args.token_file or pages.DEFAULT_TOKEN_FILE, expires=args.expires,
-                           home=args.home, team=args.team, folder=args.dir)
+        done = pages.setup(st, actor, command=args.adapter, home=args.home, team=args.team)
     finally:
         st.close()
     if args.json:
         _print_json({"schema": 1, **done})
     else:
-        if done["token_file"]:
-            print(f"publishing set up: {done['backend']} at {done['base_url']}, team {done['team']}, "
-                  f"token {done['token_file']} (expires {done['expires']}), home {done['home']}")
-        else:
-            served = f", served at {done['base_url']}" if done["base_url"] else ""
-            print(f"publishing set up: {done['backend']} in {done['dir']}{served}, home {done['home']}")
+        caps = ", ".join(done["capabilities"]) or "publish only"
+        expires = f", credentials expire {done['expires']}" if done["expires"] else ""
+        print(f"publishing set up: {done['name']} ({caps}){expires}, team {done['team']}, home {done['home']}")
         renewal_ask = done["renewal_ask"]
         if renewal_ask is None:
             return
         if renewal_ask["answered"]:
-            print(f"answered {renewal_ask['id']}: Token renewed")
+            print(f"answered {renewal_ask['id']}: {renewal.ANSWER_OUTCOME}")
         elif renewal_ask["reason"] == renewal.EXPIRES_SOON:
-            print(f"{renewal_ask['id']} left open: the token expires {done['expires']}, "
+            print(f"{renewal_ask['id']} left open: the adapter's credentials expire {done['expires']}, "
                   f"within {renewal.WINDOW.days} days")
         else:
             print(f"{renewal_ask['id']} left open: {actor} may not answer it; its addressee or any human can "
@@ -1483,10 +1472,10 @@ def cmd_pages_flush(args):
         if args.wait and args.now:
             raise usage("--now and --wait don't combine: --wait sends each page when it falls due")
         only = {pages.page_key(st.conn, raw) for raw in args.item} if args.item else None
-        if args.wait:  # the detached flusher: like the timer, it reads the token file, never the override
-            report = flusher.flush_wait(st, pages.client(st, foreground=False), only=only)
+        if args.wait:  # the detached flusher
+            report = flusher.flush_wait(st, pages.client(st), only=only)
         else:
-            report = flusher.flush(st, pages.client(st, foreground=True), now_all=args.now, only=only)
+            report = flusher.flush(st, pages.client(st), now_all=args.now, only=only)
     finally:
         st.close()
     _print_flush_report(args, report)
@@ -1499,7 +1488,7 @@ def cmd_pages_tick(args):
     st = store.open_store()
     try:
         pages.require_set_up(st)
-        client = pages.client(st, foreground=False)
+        client = pages.client(st)
         pulled = pull.pull(st, client)
         report = flusher.flush(st, client)
     finally:
@@ -1515,7 +1504,7 @@ def cmd_pages_pull(args):
     st = store.open_store()
     try:
         pages.require_set_up(st)
-        report = pull.pull(st, pages.client(st, foreground=True))
+        report = pull.pull(st, pages.client(st))
     finally:
         st.close()
     if args.json:
@@ -1530,7 +1519,7 @@ def cmd_pages_tidy(args):
     st = store.open_store()
     try:
         pages.require_set_up(st)
-        report = pull.tidy(st, pages.client(st, foreground=True), pages.page_key(st.conn, args.id),
+        report = pull.tidy(st, pages.client(st), pages.page_key(st.conn, args.id),
                            dry_run=args.dry_run)
     finally:
         st.close()
@@ -1538,7 +1527,7 @@ def cmd_pages_tidy(args):
         _print_json({"schema": 1, "dry_run": args.dry_run, **report})
         return
     if report["held"]:
-        print(f"held: the page backend rejected the token; page reads and writes wait for `trk pages setup` "
+        print(f"held: the page adapter refused (exit 2); page reads and writes wait for `trk pages setup` "
               f"with a new one ({report['renewal_ask'] or 'no renewal ask'})")
     verb = "would close" if args.dry_run else "closing"
     print(f"{report['page']}: {verb} {len(report['closing'])} thread(s), "
@@ -1555,9 +1544,9 @@ def cmd_pages_tidy(args):
 
 
 def _print_pull_report(report, *, renewal):
-    """The pull's lines; the token check's are left to the flush report when one follows."""
+    """The pull's lines; the credentials check's are left to the flush report when one follows."""
     if renewal and report["held"]:
-        print(f"held: the page backend rejected the token; page reads and writes wait for `trk pages setup` "
+        print(f"held: the page adapter refused (exit 2); page reads and writes wait for `trk pages setup` "
               f"with a new one ({report['renewal_ask'] or 'no renewal ask'})")
     if renewal and report.get("renewal_ask_error"):
         print(f"renewal ask not opened: {report['renewal_ask_error']}", file=sys.stderr)
@@ -1595,10 +1584,10 @@ def _print_flush_report(args, report):
         _print_json({"schema": 1, **report})
         return
     if report["held"]:
-        print(f"held: the page backend rejected the token; page writes wait for `trk pages setup` "
+        print(f"held: the page adapter refused (exit 2); page writes wait for `trk pages setup` "
               f"with a new one ({report['renewal_ask'] or 'no renewal ask'})")
     elif report["renewal_ask"]:
-        print(f"renewal ask: {report['renewal_ask']} (the token expires within {renewal.WINDOW.days} days)")
+        print(f"renewal ask: {report['renewal_ask']} (the adapter's credentials expire within {renewal.WINDOW.days} days)")
     if report.get("renewal_ask_error"):
         print(f"renewal ask not opened: {report['renewal_ask_error']}", file=sys.stderr)
     for outcome in flusher.OUTCOMES:
@@ -1613,7 +1602,7 @@ def cmd_pages_republish(args):
     try:
         pages.require_set_up(st)
         item_id = pages.page_key(st.conn, args.id)
-        sent = flusher.republish(st, pages.client(st, foreground=True), item_id)
+        sent = flusher.republish(st, pages.client(st), item_id)
     finally:
         st.close()
     if args.json:

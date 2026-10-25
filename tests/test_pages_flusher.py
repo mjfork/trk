@@ -7,6 +7,7 @@ directory and a stub `systemctl`."""
 import fcntl
 import json
 import os
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -338,13 +339,6 @@ def test_tick_publishes_what_is_due_without_waiting(trk, trk_home, live, fake, s
     assert not (trk_home / spawn.PID_NAME).exists()
 
 
-def test_tick_reads_the_token_file_not_the_override(trk, live, fake, monkeypatch):
-    monkeypatch.setenv("TRK_ARTIFACT_TOKEN", "tok_wrong")
-    result = trk("pages", "tick", "--json")
-    assert result.code == 0, result.err
-    assert len(result.json()["published"]) == 5  # four items and michael's Needs-you page
-
-
 def test_tick_runs_the_token_check_and_the_next_tick_after_setup_catches_up(trk, trk_home, live, fake, tmp_path):
     """Spec AC 10: a 401 holds every page write and opens one renewal ask; setup with a new token,
     as michael, answers it, and the next tick publishes every dirty page."""
@@ -481,9 +475,10 @@ def test_tests_cannot_reach_the_default_unit_directory(trk, monkeypatch):
 
 
 def test_a_write_starts_a_real_detached_flusher_that_publishes_and_exits(trk, trk_home, tree, tmp_path, monkeypatch):
-    """The detached process loads its backend by name, so this one publishes to the built-in folder backend."""
+    """The detached process runs the adapter as a child of its own, so this one publishes with the folder adapter."""
     out = tmp_path / "pages"
-    ok(trk, "pages", "setup", "--backend", "folder", "--dir", str(out), "--home", tree["P"])
+    ok(trk, "pages", "setup", "--adapter", shlex.join([sys.executable, "-m", "trk.folder", "--dir", str(out)]),
+       "--home", tree["P"])
     monkeypatch.setattr(spawn, "launch", REAL_LAUNCH)
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(filter(None, [str(SRC), os.environ.get("PYTHONPATH")])))
     section_set(trk, tree["T"], "Detached.\n")

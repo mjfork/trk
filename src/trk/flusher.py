@@ -38,8 +38,8 @@ Before a page whose render drops an `ask-<id>` handle is sent, a pull pass runs 
 (Pull-before-drop), so every comment on that box is read and replied to while the box still shows;
 a page whose own comments could not be listed is failed instead, and sent once they can be.
 
-Every flush starts with the token check (see `renewal`): while a 401 holds page writes it marks
-but sends nothing, and a 401 during the run ends it and sets the hold.
+Every flush starts with the credentials check (see `renewal`): while an exit 2 holds page writes it
+marks but sends nothing, and an exit 2 during the run ends it and sets the hold.
 """
 
 import fcntl
@@ -95,7 +95,7 @@ def _flush(st, client, report, *, now_all, only):
         pages.mark(st)
     report.update(renewal.check(st, client))
     if report["held"]:
-        return False  # a 401 holds every page write until setup has a new token
+        return False  # an exit 2 holds every page write until setup runs again
     try:
         while due := due_pages(st.conn, now_all=now_all, only=only, skip=failed):
             for item_id in due:
@@ -112,8 +112,8 @@ def _flush(st, client, report, *, now_all, only):
 
 def flush_wait(st, client, *, only=None, sleep=None):
     """`flush --wait`: register in flusher.pid, then loop: flush, mark what came in meanwhile, and
-    sleep until the earliest moment a page that hasn't failed falls due. While a 401 holds page
-    writes, or after a 401, unregister and exit. With nothing left dirty but failed pages (left
+    sleep until the earliest moment a page that hasn't failed falls due. While an exit 2 holds page
+    writes, or after one, unregister and exit. With nothing left dirty but failed pages (left
     to the timer), unregister; then, if the journal head has moved past `publish_cursor`,
     register and loop again, since a write that committed while this flusher was finishing found
     it still registered and started none. Exits at once, with an empty report, when another live
@@ -210,7 +210,7 @@ def _send(st, client, item_id, *, now_all, failed_replies):
             if items.page_unpublished(page):
                 return _first_publish(st, client, item_id, page, title, html, hashes)
             return _update(st, client, item_id, page, title, html, hashes)
-        except publisher.Unauthorized as exc:
+        except publisher.Held as exc:
             _failed(st, item_id, str(exc))
             raise _Stop() from None
         except publisher.ServiceError as exc:
@@ -277,11 +277,11 @@ def _preflight(html):
         return None, f"render: {exc}"
 
 
-MAX_TITLE = 200  # the longest title a page backend need take
+MAX_TITLE = 200  # the longest title a page adapter need take
 
 
 def page_title(title):
-    """`title` as a backend takes it: at most MAX_TITLE characters, cut at a word boundary with an
+    """`title` as an adapter takes it: at most MAX_TITLE characters, cut at a word boundary with an
     ellipsis. The page body keeps the whole title."""
     if len(title) <= MAX_TITLE:
         return title
@@ -320,7 +320,7 @@ def _first_publish(st, client, item_id, page, title, html, hashes):
     try:
         result = client.publish(title=title, body=html, team=team, tags=[tag(item_id)])
     except publisher.ServiceError as exc:
-        if not getattr(exc, "ambiguous", False) or isinstance(exc, publisher.Unauthorized):
+        if not getattr(exc, "ambiguous", False) or isinstance(exc, publisher.Held):
             if not was_publishing:  # refused outright, and no earlier attempt may still turn up
                 _set_state(st, item_id, "live")
             raise
@@ -363,13 +363,13 @@ def _update(st, client, item_id, page, title, html, hashes):
 def republish(st, client, item_id):
     """`trk pages republish`: the whole body and the title, whatever the stored hashes say, which are
     then refreshed. It goes on the stored version, and on `currentVersion` after a conflict. A repair a person runs, so a failure is recorded on the
-    page and refused (rule `republish-failed`) rather than left for `trk pages --errors`. While a 401
-    holds page writes it is refused before any call, and a 401 to it sets the hold and opens the
+    page and refused (rule `republish-failed`) rather than left for `trk pages --errors`. While an exit 2
+    holds page writes it is refused before any call, and an exit 2 to it sets the hold and opens the
     renewal ask as a flush's would."""
     if renewal.held(st):
         ask = renewal.ensure_ask(st, token_rejected=True)["renewal_ask"]
-        raise refused("republish-failed", f"page writes are held: the page backend rejected the token; run "
-                                          f"`trk pages setup` with a new one ({ask or 'no renewal ask'})", item=item_id)
+        raise refused("republish-failed", f"page writes are held: the page adapter refused (exit 2); run "
+                                          f"`trk pages setup` once it is fixed ({ask or 'no renewal ask'})", item=item_id)
     with pages_lock(st):
         page = _row(st.conn, item_id)
         if items.page_unpublished(page):
@@ -379,7 +379,7 @@ def republish(st, client, item_id):
             title, html, hashes, error = _render(st, client, item_id, page, set())
             if error is None:
                 version = _send_change(client, page, html, pages.WHOLE, title)
-        except publisher.Unauthorized as exc:
+        except publisher.Held as exc:
             _failed(st, item_id, str(exc))
             ask = renewal.rejected(st, client)["renewal_ask"]
             raise refused("republish-failed", f"republishing {item_id} failed: {exc}; renewal ask: "
@@ -424,7 +424,7 @@ def _send_change(client, page, html, change, title):
 
 
 def _changed_handles(sections):
-    """The handle ids of a conflict's `changedSections`: a backend may send `{id, change}` objects, and an
+    """The handle ids of a conflict's `changedSections`: an adapter may send `{id, change}` objects, and an
     entry that is a plain string is already an id."""
     handles = []
     for entry in sections or []:

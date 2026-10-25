@@ -513,9 +513,9 @@
               "data": {
                 "required": ["key", "old", "new"],
                 "properties": {
-                  "key": {"enum": ["default-owner", "shared-agent", "template-parent", "release-verify-job", "publish-backend", "publish-base-url", "publish-dir", "publish-token-file", "publish-team", "publish-token-expires", "publish-home"], "description": "default-owner, shared-agent, template-parent and release-verify-job are `trk config set`'s; the publish-* keys are `trk pages setup`'s (Page publisher). The token secret is never a value."},
+                  "key": {"enum": ["default-owner", "shared-agent", "template-parent", "release-verify-job", "publish-adapter", "publish-team", "publish-expires", "publish-home", "publish-backend", "publish-base-url", "publish-dir", "publish-token-file", "publish-token-expires"], "description": "default-owner, shared-agent, template-parent and release-verify-job are `trk config set`'s; the publish-* keys are `trk pages setup`'s (Page publisher). publish-backend, publish-base-url, publish-dir, publish-token-file and publish-token-expires are written no more: they appear only in rows from before page adapters. No secret is ever a value."},
                   "old": {"$ref": "#/$defs/nullable_id", "description": "null when init or the schema 2 migration first sets the default owner, when the template parent is first set, or when the first `pages setup` sets a publish-* key; the shared agent starts as worker."},
-                  "new": {"$ref": "#/$defs/id", "description": "An actor; for template-parent and publish-home, an item id; for publish-backend a backend name; for the other publish-* keys a URL, absolute file path, team slug or YYYY-MM-DD date."}
+                  "new": {"$ref": "#/$defs/nullable_id", "description": "An actor; for template-parent and publish-home, an item id; for publish-adapter the adapter's command line; for publish-expires a YYYY-MM-DD date, or null when a new adapter gives no expiry; for publish-team a team slug; in older rows, a backend name, URL, absolute file path or date."}
                 }
               }
             }

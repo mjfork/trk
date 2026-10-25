@@ -1,14 +1,14 @@
 """`trk pages pull`: comments as answers, and the reply outbox (Page publisher spec: Comments as answers).
 
 Loaded only by `pages pull` and `pages tick`. One pull is one unit of work under `<store>/pages.lock`,
-so two pulls never interleave. It starts with the token check (see `renewal`): while a 401 holds page
-writes it calls nothing, and a 401 during the pass ends it and sets the hold.
+so two pulls never interleave. It starts with the credentials check (see `renewal`): while an exit 2 holds
+page writes it calls nothing, and an exit 2 during the pass ends it and sets the hold.
 
-1. **Read.** When the backend offers the activity log (`offers_activity`), one cross-page
+1. **Read.** When the adapter offers the activity log (`offers_activity`), one cross-page
    activity log from `meta.comment_cursor`, paged while `hasMore`: its `comment` events on tracker
    pages are the new root comments, and its `reply` and `status` events (the tracker's own replies, and
    resolves whose author fields describe the root's author) are never read. With no cursor stored, or
-   one the backend calls `invalid_cursor`, the log is drained once to seed it and none of it is acted
+   one the adapter calls `invalid_cursor`, the log is drained once to seed it and none of it is acted
    on. Otherwise, and also on a seeding pass or an activity call that fails (so nothing written before the
    seed or during the failure goes unread), `list_comments` for every published page that
    shows an open ask (an open ask sits in its subtree) or showed one in its last publish (an `ask-`
@@ -28,7 +28,7 @@ writes it calls nothing, and a 401 during the pass ends it and sets the hold.
      (`ask.replied`, the ask left open) by the actor the comment's `authorId` is linked to (an unlinked one
      is linked to the one unlinked human with the same display name, else registered as a human, and the
      reply then tells an admin to merge them with `trk actor link` when a human of that name exists), told "Reply received…"; the asker confirms one as the answer with
-     `trk answer --from-comment` (tr-3vgrb). Without `authorId` (a backend that gives none) it is
+     `trk answer --from-comment` (tr-3vgrb). Without `authorId` (an adapter that gives none) it is
      pointed at `trk answer`.
    - A later comment on an answered ask gets "Already answered…", on a withdrawn one "Withdrawn…".
    - A `waiting` comment replies to the box's one ask; with none or several it is told so and stays open.
@@ -66,9 +66,9 @@ from .store import PUBLISHER
 WAITING = "waiting"
 ASK_PREFIX = "ask-"
 AUTHORS_KEY = "page_authors"  # {author id: display name} for every author the pull has seen
-CURSOR_KEY = "comment_cursor"  # the comment activity log's cursor, opaque, as the backend gave it
+CURSOR_KEY = "comment_cursor"  # the comment activity log's cursor, opaque, as the adapter gave it
 ACTIVITY = "activity"  # the call that reads the activity log, as its errors name it
-ACTIVITY_LIMIT = 500  # the backend contract's maximum, so a drain takes as few calls as it can
+ACTIVITY_LIMIT = 500  # the protocol's maximum, so a drain takes as few calls as it can
 CLOSINGS_KEY = "page_closings"  # {comment id: {reply: outbox row id, state: queued | resolved | gone, handle: its ask-<id> box}}
 CLOSINGS_FROM_KEY = "closings_from"  # stamp: a pull closes the threads of asks closed from then on
 START = ""  # the cursor stored by a seed that was given none (an empty log): read from the oldest event
@@ -84,28 +84,28 @@ NOTHING = "Nothing is waiting here."
 def pull(st, client):
     """One pull pass: read the comments, dispose of the new ones, send the outbox. Returns the report:
     the token check's fields (`held`, `renewal_ask`, maybe `renewal_ask_error`), `activity` (null when the
-    backend offers none, else {seeded, events}), `comments` (one entry per disposition made), `replies`
+    adapter offers none, else {seeded, events}), `comments` (one entry per disposition made), `replies`
     ({sent, failed, pending}: comment ids), `resolved` (comment ids of the threads resolved) and `errors`
     (per page)."""
     report = {"held": False, "renewal_ask": None, "activity": None, "comments": [],
               "replies": {"sent": [], "failed": [], "pending": []}, "resolved": [], "errors": []}
     if not client.COMMENTS:
-        return report  # a backend without comments has nothing to read and no thread to reply in
+        return report  # an adapter without comments has nothing to read and no thread to reply in
     report.update(renewal.check(st, client))
     if report["held"]:
-        return report  # a 401 holds every call until setup has a new token
+        return report  # an exit 2 holds every call until setup runs again
     try:
         with pages_lock(st):
             _pass(st, client, report)
-    except publisher.Unauthorized:
+    except publisher.Held:
         report.update(renewal.rejected(st, client))
     return report
 
 
 def before_drop(st, client):
     """The pull-before-drop pass the flusher runs, under the pages.lock it already holds, before it sends a
-    page whose render drops an `ask-<id>` handle: no token check (the flush made it) and no 401 handling (a
-    401 propagates to the flush). Returns the pass's `comments`, `replies` and `errors`, and `unread`: the
+    page whose render drops an `ask-<id>` handle: no credentials check (the flush made it) and no exit 2 handling
+    (it propagates to the flush). Returns the pass's `comments`, `replies` and `errors`, and `unread`: the
     item ids of the pages whose comments it could not read (none when the activity log was read whole)."""
     report = {"activity": None, "comments": [], "replies": {"sent": [], "failed": [], "pending": []},
               "resolved": [], "errors": [], "unread": []}
@@ -167,7 +167,7 @@ def pages_to_read(conn):
 
 def _read(st, client, report):
     """{slug: (item id, the page's root comments)} for every page read. A page whose listing fails is
-    left out, with the failure on its `last_error`; a 401 is recorded and raised."""
+    left out, with the failure on its `last_error`; an exit 2 is recorded and raised."""
     threads = {}
     for item_id, slug in pages_to_read(st.conn):
         listed = _list(st, client, item_id, slug, report)
@@ -182,7 +182,7 @@ def _list(st, client, item_id, slug, report):
     except publisher.ServiceError as exc:
         _page_error(st, item_id, str(exc))
         report["errors"].append({"item": item_id, "slug": slug, "error": str(exc)})
-        if isinstance(exc, publisher.Unauthorized):
+        if isinstance(exc, publisher.Held):
             raise
         return None
     _clear_pull_error(st, item_id, "list_comments")
@@ -191,11 +191,11 @@ def _list(st, client, item_id, slug, report):
 
 
 def _offers_activity(st, client, report):
-    """Whether the backend offers the activity log. An `offers_activity` call that fails is recorded
+    """Whether the adapter offers the activity log. An `offers_activity` call that fails is recorded
     as an activity-log failure, and the pass reads page by page."""
     try:
         offered = client.offers_activity()
-    except publisher.Unauthorized:
+    except publisher.Held:
         raise
     except publisher.ServiceError as exc:
         _activity_error(st, exc, report)
@@ -230,12 +230,12 @@ def _read_activity(st, client, report):
 
 def _drain(client, cursor):
     """(events, the cursor after the last page read, the failure that stopped it or None, and for each page
-    read (its first event's index in events, the cursor it was read from)). A 401 is raised."""
+    read (its first event's index in events, the cursor it was read from)). An exit 2 is raised."""
     events, starts = [], []
     while True:
         try:
             page = client.activity(cursor, limit=ACTIVITY_LIMIT)
-        except publisher.Unauthorized:
+        except publisher.Held:
             raise
         except publisher.ServiceError as exc:
             return events, cursor, exc, starts
@@ -370,7 +370,7 @@ def _decide(tx, item_id, slug, comment):
     store change the disposition causes. A comment that is read (on `waiting` or an ask's box) links its
     author to an actor, registering one when nobody is linked yet."""
     handle = comment.get("handle") or ""
-    if comment.get("authorKind", "human") != "human":  # absent from a backend without author kinds: all are people's
+    if comment.get("authorKind", "human") != "human":  # absent from an adapter without author kinds: all are people's
         return IGNORED, None, None, False  # only people comment; an assistant's (or unknown) root comment is no answer
     note = actors.merge_note(tx.conn, comment["authorId"], comment.get("author")) if comment.get("authorId") else None
     row = _ask(tx.conn, handle[len(ASK_PREFIX):]) if handle.startswith(ASK_PREFIX) else None
@@ -389,7 +389,7 @@ def _decide(tx, item_id, slug, comment):
 
 def _commenter(tx, comment):
     """The actor a comment's author id is linked to, registered now if nobody is; None when the
-    backend gives no author id."""
+    adapter gives no author id."""
     author_id = comment.get("authorId")
     if not author_id:
         return None
@@ -460,7 +460,7 @@ def _on_ask(tx, row, slug, comment):
         return _on_closed(conn, row)
     if not _after_opening(conn, row, _created(comment)):
         return _before_reopening(conn, row)
-    if not comment.get("authorId"):  # a backend without author ids says nothing about who wrote it
+    if not comment.get("authorId"):  # an adapter without author ids says nothing about who wrote it
         return USE_CLI, ask_id, f"Answering by comment isn't enabled yet: answer with `trk answer {ask_id}`.", False
     body = comment.get("comment") or ""
     if not body.strip():
@@ -501,7 +501,7 @@ def _latest(conn, item_id, change):
 
 
 def _note_authors(st, comments):
-    """Remember every author id seen, with the display name the backend gave, for `trk pages authors`."""
+    """Remember every author id seen, with the display name the adapter gave, for `trk pages authors`."""
     seen = {c["authorId"]: " ".join((c.get("author") or "").split()) for c in comments
             if c.get("authorId") and c.get("authorKind") != "assistant"}
     if not seen:
@@ -569,11 +569,12 @@ def _send(st, client, threads, row, report, *, queued_now=False):
     gone = None
     if not already:
         try:
-            result = client.reply(row["slug"], row["comment_id"], row["body"], resolve=resolve)
+            result = client.reply(row["slug"], row["comment_id"], row["body"], resolve=resolve,
+                                  idempotency_key=f"trk-reply-{row['id']}")
         except publisher.ServiceError as exc:
             if item_id:
                 _page_error(st, item_id, str(exc))
-            if isinstance(exc, publisher.Unauthorized):
+            if isinstance(exc, publisher.Held):
                 raise
             if getattr(exc, "ambiguous", False):
                 report["replies"]["pending"].append(row["comment_id"])  # read the thread before sending again
@@ -584,7 +585,7 @@ def _send(st, client, threads, row, report, *, queued_now=False):
                 _closing_state(st, closing[0], "gone")  # the thread is gone, or not the token owner's to resolve
             return
         if closing and not (isinstance(result, dict) and result.get("resolved") is True and "note" not in result):
-            gone = (result.get("note") if isinstance(result, dict) else None) or "the backend did not resolve it"
+            gone = (result.get("note") if isinstance(result, dict) else None) or "the adapter did not resolve it"
     elif closing and (thread or {}).get("status") != "resolved":
         gone = "the closing reply is on the thread but the thread is not resolved"
     _reply_state(st, row["id"], "sent")
@@ -723,7 +724,7 @@ def tidy(st, client, key, *, dry_run=False):
     report = {"held": False, "renewal_ask": None, "page": key, "slug": None, "closing": [], "skipped": [],
               "replies": {"sent": [], "failed": [], "pending": []}, "resolved": [], "errors": []}
     if not client.COMMENTS:
-        raise refused("no-comments", f"the {client.NAME} page backend has no comments to tidy")
+        raise refused("no-comments", f"the {client.NAME} page adapter has no comments to tidy")
     report.update(renewal.check(st, client))
     if report["held"]:
         return report
@@ -734,7 +735,7 @@ def tidy(st, client, key, *, dry_run=False):
     try:
         with pages_lock(st):
             _tidy(st, client, page, report, dry_run)
-    except publisher.Unauthorized:
+    except publisher.Held:
         report.update(renewal.rejected(st, client))
     return report
 
@@ -743,7 +744,7 @@ def _tidy(st, client, page, report, dry_run):
     slug, key = page["slug"], page["item_id"]
     try:
         listed = client.list_comments(slug).get("comments") or []
-    except publisher.Unauthorized:
+    except publisher.Held:
         raise
     except publisher.ServiceError as exc:
         report["errors"].append({"item": key, "slug": slug, "error": str(exc)})

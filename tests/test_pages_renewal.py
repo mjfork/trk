@@ -1,24 +1,23 @@
-"""Token expiry and the renewal ask (Page publisher spec: Token expiry, a backend's 401, the
-renewal answer in `pages setup`; AC 10's third bullet), against the in-process fake page backend.
-No real backend is ever called."""
+"""The adapter's credentials: their expiry and the renewal ask (Page publisher spec: Token expiry, an
+adapter's exit 2, the renewal answer in `pages setup`; AC 10's third bullet), against the in-process
+fake page adapter. No real host is ever called."""
 
 import json
 
 import pytest
 
-from fake_backend import TOKEN, FakeBackend
+from fake_backend import TOKEN
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_setup import EXPIRES, ME, fake, journal, meta, setup_argv, token_file, tree  # noqa: F401 (fixtures)
 from trk import renewal
 
 NEW_TOKEN = "tok_" + "n" * 40
-GRANTS = FakeBackend.GRANTS
 
 
 def renewal_asks(trk_home):
     conn = db(trk_home)
     try:
-        return conn.execute("SELECT * FROM items WHERE form = 'ask' AND title = 'Mint a new tracker token' "
+        return conn.execute("SELECT * FROM items WHERE form = 'ask' AND title = 'Fix the page adapter' "
                             "ORDER BY rowid").fetchall()
     finally:
         conn.close()
@@ -39,14 +38,13 @@ def rejected(fake):
 
 
 def renew(trk, fake, tmp_path, home, *extra, expires="2027-10-01"):
-    """Mint the new token into a fresh file and run setup with it."""
+    """Mint the new token into a fresh file the adapter reads, and run setup with it."""
     path = tmp_path / "new-token"
     path.write_text(NEW_TOKEN + "\n")
     path.chmod(0o600)
     fake.token = NEW_TOKEN
-    argv = list(setup_argv(path, home))
-    argv[argv.index("--expires") + 1] = expires
-    return trk(*argv, *extra)
+    fake.expires = expires
+    return trk(*setup_argv(path, home), *extra)
 
 
 # ----- AC 1: a 401 opens one ask and holds every page write; setup with a new token answers it --------
@@ -98,7 +96,7 @@ def test_a_401_while_an_expiry_ask_is_open_opens_no_second_ask(trk, trk_home, li
     assert report["held"] is True and fake.tool_calls("publish") == []
     (ask,) = renewal_asks(trk_home)
     assert report["renewal_ask"] == ask["id"]
-    assert "HTTP 401" not in question(trk_home, ask["id"])
+    assert "exit 2" not in question(trk_home, ask["id"])
 
 
 def test_setup_with_a_new_token_answers_the_ask_and_the_next_flush_catches_up(trk, trk_home, live, fake, tmp_path):
@@ -112,8 +110,8 @@ def test_setup_with_a_new_token_answers_the_ask_and_the_next_flush_catches_up(tr
     (answered,) = [row for row in journal(trk_home, since) if row["change"] == "ask.answered"]
     data = json.loads(answered["data"])
     assert answered["item"] == ask["id"] and answered["actor"] == "michael"
-    assert data["via"] == "cli" and data["outcome"] == "Token renewed"
-    assert data["answer"] == "New tracker token configured, expires 2027-10-01."
+    assert data["via"] == "cli" and data["outcome"] == "Adapter fixed"
+    assert data["answer"] == "The page adapter checks out; its credentials expire 2027-10-01."
     assert renewal_asks(trk_home)[0]["status"] == "closed"
     assert meta(trk_home, "publish_renewal_ask") == ""
     # the config rows and the answer are one transaction: the answer is journaled with the setup's rows
@@ -137,7 +135,7 @@ def test_setup_with_the_rejected_token_fails_and_keeps_the_hold(trk, trk_home, l
     rejected(fake)
     flush(trk)
     result = trk(*setup_argv(token_file, live["P"]), "--json")
-    assert result.code == 1 and result.error()["rule"] == "token-check-failed"
+    assert result.code == 1 and result.error()["rule"] == "adapter-check-failed"
     assert renewal_asks(trk_home)[0]["status"] == "open"
     fake.token = TOKEN
     assert flush(trk)["held"] is True
@@ -201,12 +199,11 @@ def test_a_closed_home_does_not_stop_the_flush(trk, trk_home, live, fake, monkey
     assert len(report["published"]) == 5
 
 
-# ----- AC 3: the question names the expiry date, the grants and the setup command --------------------
+# ----- AC 3: the question names the expiry date and the setup command, never a secret ---------------
 
 
-@pytest.mark.parametrize("cause", ["expiry", "401"])
-def test_the_question_names_the_expiry_the_grants_and_the_setup_command(trk, trk_home, live, fake, monkeypatch,
-                                                                          cause):
+@pytest.mark.parametrize("cause", ["expiry", "exit 2"])
+def test_the_question_names_the_expiry_and_the_setup_command(trk, trk_home, live, fake, monkeypatch, token_file, cause):
     if cause == "expiry":
         monkeypatch.setenv("TRK_NOW", "2027-09-20T09:00:00Z")
     else:
@@ -215,19 +212,18 @@ def test_the_question_names_the_expiry_the_grants_and_the_setup_command(trk, trk
     (ask,) = renewal_asks(trk_home)
     text = question(trk_home, ask["id"])
     assert EXPIRES in text
-    assert all(f"`{grant}`" in text for grant in GRANTS)
-    assert f"trk pages setup --backend fake --base-url {fake.base_url} --token-file" in text
-    assert f"--home {live['P']}" in text and "--expires YYYY-MM-DD" in text
-    assert ("HTTP 401" in text) == (cause == "401")
+    assert f"trk pages setup --adapter 'fake-adapter --token-file {token_file}' --home {live['P']}" in text
+    assert ("exit 2" in text) == (cause == "exit 2")
     assert TOKEN not in text and NEW_TOKEN not in text
 
 
-def test_a_backend_without_grants_names_none(trk, trk_home, live, fake, monkeypatch):
-    monkeypatch.setattr(FakeBackend, "GRANTS", ())
-    rejected(fake)
-    flush(trk)
-    (ask,) = renewal_asks(trk_home)
-    assert "ticked for" not in question(trk_home, ask["id"])
+def test_an_adapter_without_an_expiry_never_opens_an_expiry_ask(trk, trk_home, fake, tree, token_file, monkeypatch):
+    fake.expires = None
+    assert trk(*setup_argv(token_file, tree["P"])).code == 0
+    assert meta(trk_home, "publish_expires") is None
+    monkeypatch.setenv("TRK_NOW", "2099-01-01T09:00:00Z")
+    report = flush(trk)
+    assert report["renewal_ask"] is None and renewal_asks(trk_home) == []
 
 
 # ----- AC 4: setup by an actor that may not answer still succeeds, leaves the ask open, says so -------
@@ -270,16 +266,21 @@ def test_a_401_on_an_update_holds_too(trk, trk_home, live, fake):
 
 
 def test_a_401_from_before_a_setup_does_not_hold_the_new_token(trk, trk_home, live, fake, tmp_path, monkeypatch):
-    from trk import store
+    from trk import pages, store
 
     rejected(fake)
     flush(trk)
-    assert renew(trk, fake, tmp_path, live["P"]).code == 0  # answers the ask and lifts the hold
-    since = journal(trk_home)[-1]["seq"]
     monkeypatch.setenv("TRK_HOME", str(trk_home))
     st = store.open_store()
-    try:  # a run that began with the old token meets its 401 only now
-        report = renewal.rejected(st, fake({"base_url": fake.base_url}, TOKEN))
+    try:
+        old = pages.client(st)  # a run that began before the setup below
+    finally:
+        st.close()
+    assert renew(trk, fake, tmp_path, live["P"]).code == 0  # answers the ask and lifts the hold
+    since = journal(trk_home)[-1]["seq"]
+    st = store.open_store()
+    try:  # ... meets its refusal only now
+        report = renewal.rejected(st, old)
     finally:
         st.close()
     assert report == {"held": False, "renewal_ask": None}

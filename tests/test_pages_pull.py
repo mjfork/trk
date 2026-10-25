@@ -7,7 +7,7 @@ import threading
 
 import pytest
 
-from fake_backend import ACTIVITY, TOKEN
+from fake_backend import ACTIVITY
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_setup import fake, journal, meta, setup_argv, token_file, tree  # noqa: F401 (fixtures)
 from trk import pull, store
@@ -496,7 +496,6 @@ def test_two_pulls_racing_send_exactly_one_reply(trk, trk_home, mode, asked, fak
         return real(name, arguments, **kwargs)
 
     monkeypatch.setattr(fake, "call", slow)
-    monkeypatch.setenv("TRK_ARTIFACT_TOKEN", TOKEN)
     reports, errors = [], []
 
     def run():
@@ -504,7 +503,7 @@ def test_two_pulls_racing_send_exactly_one_reply(trk, trk_home, mode, asked, fak
         try:
             from trk import pages
 
-            reports.append(pull.pull(st, pages.client(st, foreground=True)))
+            reports.append(pull.pull(st, pages.client(st)))
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
         finally:

@@ -226,18 +226,18 @@ You do not need herdr. Anything that can run `trk` and read JSON can drive the s
 
 trk can publish each item as a web page, with a table of its children, its open asks and its evidence. Without publishing, trk works fully and shows "not set up" when you ask about pages. `trk pages render <id>` prints any page's HTML whether publishing is set up or not.
 
-Pages go through a backend, chosen at setup:
+Pages go through a page adapter, a program trk runs for each call ([docs/adapters.md](docs/adapters.md)):
 
-- `folder`, built in, writes each page as an HTML file in a directory:
+- `trk-pages-folder`, installed with trk, writes each page as an HTML file in a directory:
   ```bash
-  trk pages setup --backend folder --dir ~/trk-pages --home <id of an open item>
+  trk pages setup --adapter "trk-pages-folder --dir ~/trk-pages" --home <id of an open item>
   ```
-  Add `--base-url https://…` if a web server serves that directory, so the pages link to each other there.
-- Another backend can publish to a hosted service, where people comment on a page and a comment on an ask becomes a reply to it. Such a backend is a separate Python package that registers itself with trk (see `src/trk/publisher.py` for the interface). It usually needs a token: save the token in a file that only you can read (`chmod 600`), and pass `--token-file` and `--expires` to setup. trk checks the token with one call and stores only the path to the file, never the token.
+  Add `--base-url https://…` inside the quotes if a web server serves that directory, so the pages link to each other there.
+- An adapter for a hosted service, where people comment on a page and a comment on an ask becomes a reply to it, lives in its own repository, in any language. It keeps its own credentials: trk never reads, stores or prints a secret. `python -m trk.conformance -- <command>` checks an adapter against the protocol.
 
 `--home` names the item that the publisher's own asks sit under. Look at `trk pages setup --help` for the details. Then start the timer, which runs `trk pages tick` about every minute: `./install.sh --pages` (or `trk pages timer install`).
 
-[docs/operations.md](docs/operations.md) covers the timer, the token's expiry and what to do when a page fails.
+[docs/operations.md](docs/operations.md) covers the timer, the adapter's credentials expiring and what to do when a page fails.
 
 Pages are visible to everyone the publisher shares them with. Keep secrets and customer data out of titles, sections and handoffs.
 

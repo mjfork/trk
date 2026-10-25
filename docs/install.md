@@ -92,7 +92,7 @@ The script prints what to do next: check actors and roles, restart Claude Code, 
 
 ## The token
 
-The installer never reads, prints or stores a token. A page backend that publishes to a hosted service usually needs one, and you give it to trk in a separate step with `trk pages setup --token-file <path>`. That command checks the token and stores only the path. See [operations.md](operations.md#publishing-setup).
+The installer never reads, prints or stores a token, and neither does trk. A page adapter that publishes to a hosted service keeps its own credentials; `trk pages setup --adapter "<command>"` only runs it. See [operations.md](operations.md#publishing-setup) and [adapters.md](adapters.md).
 
 ## Doing it by hand
 

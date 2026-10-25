@@ -2,25 +2,20 @@
 against the in-process fake page backend. No real backend is ever called."""
 
 import json
-import os
 import sqlite3
 
 import pytest
 
-from fake_backend import BASE_URL, TOKEN, FakeBackend
+from fake_backend import BASE_URL, EXPIRES, TOKEN, FakeBackend
 from gated import DEST, section_file, ticket
-from trk import pages, publisher
-
-EXPIRES = "2027-10-01"
+from trk import adapter
 
 
 @pytest.fixture
 def fake(monkeypatch):
-    """The fake backend, registered as `fake`, behind every client the CLI builds; backoff sleeps are
-    recorded, not slept."""
+    """The fake adapter behind every client the CLI builds; backoff sleeps are recorded, not slept."""
     service = FakeBackend()
-    monkeypatch.setitem(publisher.BUILTIN, "fake", service)
-    monkeypatch.delenv("TRK_ARTIFACT_TOKEN", raising=False)
+    monkeypatch.setattr(adapter, "_runner", service.runner())
     return service
 
 
@@ -56,9 +51,12 @@ def tree(trk, monkeypatch):
 ME = "needs-you:michael"  # the default owner's Needs-you page, which every published store has
 
 
+def command(token_file):
+    return f"fake-adapter --token-file {token_file}"
+
+
 def setup_argv(token_file, home, *extra):
-    return ("pages", "setup", "--backend", "fake", "--base-url", BASE_URL, "--token-file", str(token_file), "--expires", EXPIRES,
-            "--home", home, *extra)
+    return ("pages", "setup", "--adapter", command(token_file), "--home", home, *extra)
 
 
 def journal(trk_home, since=0):
@@ -101,28 +99,15 @@ def test_pages_says_not_set_up_before_setup(trk, tree, fake):
     assert trk("pages", "--json").json() == {"schema": 1, "set_up": False, "pages": [], "failed_replies": []}
 
 
-@pytest.mark.parametrize("mode", [0o644, 0o640, 0o604])
-def test_a_token_file_readable_by_others_is_refused(trk, trk_home, tree, fake, token_file, mode):
-    token_file.chmod(mode)
-    before = head(trk_home)
-    result = trk(*setup_argv(token_file, tree["P"]), "--json")
-    assert result.code == 1
-    assert result.error()["rule"] == "token-file-mode"
-    assert fake.requests == []
-    assert head(trk_home) == before
-
-
 def test_a_valid_setup_journals_one_config_row_per_key(trk, trk_home, tree, fake, token_file):
     before = head(trk_home)
     result = trk(*setup_argv(token_file, tree["P"]))
     assert result.code == 0, result.err
     rows = journal(trk_home, before)
-    assert [row["change"] for row in rows] == ["config.changed"] * 5
+    assert [row["change"] for row in rows] == ["config.changed"] * 3
     assert [json.loads(row["data"]) for row in rows] == [
-        {"key": "publish-backend", "old": None, "new": "fake"},
-        {"key": "publish-base-url", "old": None, "new": BASE_URL},
-        {"key": "publish-token-file", "old": None, "new": str(token_file)},
-        {"key": "publish-token-expires", "old": None, "new": EXPIRES},
+        {"key": "publish-adapter", "old": None, "new": command(token_file)},
+        {"key": "publish-expires", "old": None, "new": EXPIRES},
         {"key": "publish-home", "old": None, "new": tree["P"]},
     ]  # the team is already `tracker` by default: unchanged, so no row
     assert {row["actor"] for row in rows} == {"michael"}
@@ -170,11 +155,11 @@ def test_a_failed_token_check_exits_1_and_stores_nothing(trk, trk_home, tree, fa
     before = head(trk_home)
     result = trk(*setup_argv(token_file, tree["P"]), "--json")
     assert result.code == 1
-    assert result.error()["rule"] == "token-check-failed"
-    assert "401" in result.error()["message"]
+    assert result.error()["rule"] == "adapter-check-failed"
+    assert "401" in result.error()["message"] and "exit 2" in result.error()["message"]
     assert "tok_revoked" not in result.out + result.err
     assert head(trk_home) == before
-    assert meta(trk_home, "publish_base_url") is None
+    assert meta(trk_home, "publish_adapter") is None
     assert trk("pages", "flush").code == 1  # still off
 
 
@@ -182,7 +167,7 @@ def test_an_unreachable_service_fails_the_check_after_its_retries(trk, tree, fak
     fake.fail_next("502", tool="check", times=4)
     result = trk(*setup_argv(token_file, tree["P"]), "--json")
     assert result.code == 1
-    assert result.error()["rule"] == "token-check-failed"
+    assert result.error()["rule"] == "adapter-check-failed"
     assert fake.sleeps == [5, 20, 60]
 
 
@@ -214,53 +199,60 @@ def test_rerunning_setup_keeps_the_cursor_it_already_has(trk, trk_home, tree, fa
     assert meta(trk_home, "publish_cursor") == cursor
 
 
-@pytest.mark.parametrize("argv, message", [
-    (("--base-url", "ftp://x.test"), "https"),
-    (("--base-url", "http://artifacts.example.com"), "https"),
-    (("--base-url", "https://"), "https"),
-    (("--expires", "2027-13-01"), "YYYY-MM-DD"),
-    (("--team", ""), "team"),
-])
-def test_bad_setup_values_are_usage_errors(trk, tree, fake, token_file, argv, message):
-    flags = dict(zip(argv[::2], argv[1::2]))
-    full = {"--backend": "fake", "--base-url": BASE_URL, "--token-file": str(token_file), "--expires": EXPIRES, "--home": tree["P"], **flags}
-    result = trk("pages", "setup", *[part for pair in full.items() for part in pair])
-    assert result.code == 2
-    assert message in result.err
+def test_an_empty_team_is_a_usage_error(trk, tree, fake, token_file):
+    result = trk(*setup_argv(token_file, tree["P"], "--team", ""))
+    assert result.code == 2 and "team" in result.err
     assert fake.requests == []
 
 
-def test_a_missing_or_empty_token_file_is_a_usage_error(trk, tree, fake, token_file, tmp_path):
-    assert trk(*setup_argv(tmp_path / "nope", tree["P"])).code == 2
-    token_file.write_text("\n")
-    assert trk(*setup_argv(token_file, tree["P"])).code == 2
+@pytest.mark.parametrize("bad", ["", "  ", "fake-adapter 'unclosed"])
+def test_a_bad_adapter_command_is_a_usage_error(trk, tree, fake, bad):
+    result = trk("pages", "setup", "--adapter", bad, "--home", tree["P"])
+    assert result.code == 2 and "--adapter" in result.err
     assert fake.requests == []
 
 
-# ----- AC 3: $TRK_ARTIFACT_TOKEN ------------------------------------------------------------------
+def test_a_missing_token_file_holds_the_adapter_and_fails_the_check(trk, tree, fake, tmp_path):
+    result = trk(*setup_argv(tmp_path / "nope", tree["P"]), "--json")
+    assert result.code == 1 and result.error()["rule"] == "adapter-check-failed"
+    assert "cannot read the token file" in result.error()["message"]
+    assert fake.requests == []
 
 
-def test_setup_checks_the_files_token_even_when_the_environment_overrides(trk, tree, fake, token_file, monkeypatch):
-    """Setup configures the file the flusher and timer will read, so the file's token is the one checked."""
-    token_file.write_text("tok_stale\n")
-    monkeypatch.setenv("TRK_ARTIFACT_TOKEN", TOKEN)
-    assert trk(*setup_argv(token_file, tree["P"]), "--json").error()["rule"] == "token-check-failed"
-    token_file.write_text(TOKEN + "\n")
-    monkeypatch.setenv("TRK_ARTIFACT_TOKEN", "tok_other")
-    assert trk(*setup_argv(token_file, tree["P"])).code == 0
+def test_an_expiry_that_is_no_date_fails_the_check(trk, tree, fake, token_file):
+    fake.expires = "2027-13-01"
+    result = trk(*setup_argv(token_file, tree["P"]), "--json")
+    assert result.code == 1 and result.error()["rule"] == "adapter-check-failed"
+    assert "YYYY-MM-DD" in result.error()["message"]
 
 
-def test_the_environment_token_never_reaches_a_detached_run(token_file, monkeypatch):
-    monkeypatch.setenv("TRK_ARTIFACT_TOKEN", "tok_from-env")
-    assert pages.read_token(str(token_file), foreground=True) == "tok_from-env"
-    assert pages.read_token(str(token_file), foreground=False) == TOKEN
+def test_an_adapter_of_another_protocol_is_refused(trk, tree, fake, token_file, monkeypatch):
+    real = adapter._runner
+
+    def other(argv, request):
+        code, out, err = real(argv, request)
+        if argv[-1] == "describe":
+            out = json.dumps({**json.loads(out), "protocol": 2}).encode()
+        return code, out, err
+
+    monkeypatch.setattr(adapter, "_runner", other)
+    result = trk(*setup_argv(token_file, tree["P"]), "--json")
+    assert result.code == 1 and "protocol 2" in result.error()["message"]
 
 
-def test_the_file_mode_is_checked_even_when_the_environment_overrides(trk, tree, fake, token_file, monkeypatch):
-    """The detached flusher reads the file the setup names, so it has to be right."""
-    monkeypatch.setenv("TRK_ARTIFACT_TOKEN", TOKEN)
-    token_file.chmod(0o644)
-    assert trk(*setup_argv(token_file, tree["P"]), "--json").error()["rule"] == "token-file-mode"
+def test_every_request_carries_the_protocol_and_no_secret(tree, fake, token_file):
+    seen, real = [], adapter._runner
+
+    def spying(argv, request):
+        seen.append((argv, json.loads(request)))
+        return real(argv, request)
+
+    client = adapter.Client(command(token_file), runner=spying)
+    client.check()
+    client.publish(title="T", body="<p>x</p>", team="tracker", tags=["trk:tr-x"])
+    assert [argv[-1] for argv, _ in seen] == ["describe", "check", "publish"]
+    assert all(request["protocol"] == adapter.PROTOCOL for _, request in seen)
+    assert TOKEN not in json.dumps(seen)
 
 
 # ----- AC 4: the page list ------------------------------------------------------------------------
@@ -314,17 +306,11 @@ def test_pages_shows_the_bookkeeping_and_filters_dirty_and_errors(trk, trk_home,
     assert lines[0].startswith(tree["P"])
 
 
-def test_only_https_or_a_loopback_http_url_is_accepted():
-    assert pages._check_base_url("https://x.test/") == "https://x.test"
-    assert pages._check_base_url("http://localhost:3000") == "http://localhost:3000"
-    assert pages._check_base_url("http://127.0.0.1:3000/") == "http://127.0.0.1:3000"
-
-
 def test_json_before_the_subverb_still_means_json(trk, tree, fake, token_file):
     result = trk("pages", "--json", *setup_argv(token_file, tree["P"])[1:])
     assert result.json()["home"] == tree["P"]
     assert trk("pages", "--json", "pull").json()["comments"] == []
-    assert trk("pages", "--dirty", "setup", "--base-url", BASE_URL, "--expires", EXPIRES, "--home", tree["P"]).code == 2
+    assert trk("pages", "--dirty", "setup", "--home", tree["P"]).code == 2
 
 
 def test_pull_after_setup_with_no_page_published_reads_nothing(trk, tree, fake, token_file):
@@ -336,23 +322,14 @@ def test_pull_after_setup_with_no_page_published_reads_nothing(trk, tree, fake, 
 
 def test_setup_prints_what_it_configured_without_the_secret(trk, tree, fake, token_file):
     result = trk(*setup_argv(token_file, tree["P"]), "--json")
-    assert result.json() == {"schema": 1, "backend": "fake", "base_url": BASE_URL, "dir": None,
-                             "token_file": str(token_file), "team": "tracker", "expires": EXPIRES, "home": tree["P"],
-                             "changed": ["publish-backend", "publish-base-url", "publish-token-file",
-                                         "publish-token-expires", "publish-home"],
-                             "renewal_ask": None}
+    assert result.json() == {"schema": 1, "adapter": command(token_file), "name": "fake",
+                             "capabilities": ["comments"], "team": "tracker", "expires": EXPIRES, "home": tree["P"],
+                             "changed": ["publish-adapter", "publish-expires", "publish-home"], "renewal_ask": None}
     text = trk(*setup_argv(token_file, tree["P"])).out
-    assert "tracker" in text and BASE_URL in text
+    assert "fake (comments)" in text and "tracker" in text and EXPIRES in text
 
 
 def test_setup_is_the_default_owners_or_anyones(trk, trk_home, tree, fake, token_file):
     assert trk(*setup_argv(token_file, tree["P"]), "--as", "worker").code == 0
     assert {row["actor"] for row in journal(trk_home) if row["change"] == "config.changed"
             and json.loads(row["data"])["key"].startswith("publish-")} == {"worker"}
-
-
-def test_relative_token_file_paths_are_stored_absolute(trk, trk_home, tree, fake, token_file, monkeypatch):
-    monkeypatch.chdir(token_file.parent)
-    assert trk(*setup_argv(token_file.name, tree["P"])).code == 0
-    assert meta(trk_home, "publish_token_file") == str(token_file)
-    assert os.path.isabs(meta(trk_home, "publish_token_file"))

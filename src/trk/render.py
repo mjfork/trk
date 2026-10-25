@@ -89,7 +89,7 @@ SELECT items.* FROM items JOIN down ON items.id = down.id ORDER BY items.id
 
 def _page_url(url):
     """A published page's URL as a link: what `markdown.safe_url` allows, and a `file:` URL, which the
-    folder backend gives a page it writes to a directory nobody serves. Only the publisher's own page
+    folder adapter gives a page it writes to a directory nobody serves. Only the publisher's own page
     URLs get this; a link written in an item never does."""
     if url and url.strip().lower().startswith("file:///"):
         return url

@@ -61,7 +61,7 @@ def link(tx, actor_id, service_user):
     the id itself stays internal, as the actors JSON does. Linking the holder again writes nothing."""
     service_user = service_user.strip()
     if not service_user or any(ch.isspace() for ch in service_user):
-        raise usage("--service-user takes the author id the page backend shows, one word")
+        raise usage("--service-user takes the author id the page adapter shows, one word")
     conn = tx.conn
     row = get(conn, actor_id)
     if row["service_user_id"] == service_user:
