@@ -136,10 +136,10 @@ SESSION=11111111-1111-4111-8111-111111111111
 trk claim "$TICKET" --as worker --session "$SESSION"
 ```
 
-Now move the ticket through its gates. The stages are `framed`, `specd`, `built`, `merged` and `verified`. The first step is a judgment that the ticket is complete on its own.
+Now move the ticket through its gates. The stages are `framed`, `specd`, `built`, `merged` and `verified`. The first step is a judgment that the ticket is complete on its own. It must come from a session that wrote none of the ticket: here alice wrote it from her terminal, so the worker may judge it.
 
 ```bash quickstart
-trk advance "$TICKET" --judgment "The ticket states current and desired behaviour." --as worker
+trk advance "$TICKET" --judgment "The ticket states current and desired behaviour." --as worker --session "$SESSION"
 ```
 
 To leave `specd`, the ticket needs evidence that the work is built: a pull request row and a passing test run, both tied to a commit. This ticket changes no repo, so the pull request is `none` and the commit is a placeholder of zeros. On a real ticket, use `--ref <pull request URL or branch>` and `--sha "$(git rev-parse HEAD)"`.

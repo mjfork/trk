@@ -145,3 +145,20 @@ def test_the_installed_script_speaks_the_protocol(tmp_path):
     with pytest.raises(publisher.Refused) as caught:
         client.list_comments(made["slug"])
     assert caught.value.error == "unknown_verb"
+
+
+def test_status_says_whether_publishing_is_set_up_and_working(trk, tree, out, tmp_path, monkeypatch):
+    monkeypatch.setenv("TRK_LAUNCH_AGENTS", str(tmp_path / "agents"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    before = trk("pages", "status", "--json")
+    assert before.code == 0 and before.json()["set_up"] is False and "timer" in before.json()
+    assert "not set up" in trk("pages", "status").out
+    assert trk("pages", "setup", "--adapter", command(out), "--home", tree["P"]).code == 0
+    waiting = trk("pages", "status", "--json").json()
+    assert waiting["set_up"] and waiting["adapter"] and waiting["pages"] > 0
+    assert waiting["dirty"] == waiting["pages"] and waiting["last_published_at"] is None
+    flush(trk)
+    done = trk("pages", "status", "--json").json()
+    assert done["dirty"] == 0 and done["errors"] == 0 and done["last_published_at"]
+    text = trk("pages", "status").out
+    assert "publishing set up" in text and "0 waiting, 0 failing" in text and "timer" in text

@@ -227,6 +227,10 @@ def add(tx, raw_id, kind, gate, *, criterion=None, ref=None, sha=None, verdict=N
         verdict = "fail"
     fields = {"ref": ref, "sha": sha, "criterion": criterion_row, "detail": None, "verdict": verdict}
     _check_table(row, kind, gate, fields)
+    if kind == "judgment" and gate in ("accept", "specd"):
+        from . import stages
+
+        stages.check_spec_judge(tx, row, gate)
     if kind in BUILDER_KINDS and row["form"] in ("spec_bound", "self_contained"):
         claims.require_held(tx, row, f"{kind} evidence")
     if VERDICT[kind] == "pass":
@@ -539,6 +543,29 @@ def verdict_label(row):
     return RED_FIRST_LABEL if row["red_first"] else row["verdict"]
 
 
+# Why a row does not count, in words: `trk evidence` prints it beside the reason code (`why` in JSON).
+WHY = {"retracted": "a later retract row withdrew it",
+       "not-weighed": "this gate does not weigh this kind",
+       "old-version": "it judged an older version of its criterion",
+       "before-reopen": "recorded before the item was reopened",
+       "before-draft": "recorded before the spec went back to draft",
+       "sha-unverifiable": "git cannot place its sha in the ticket's checkouts",
+       "unpaired-red-first": "a red-first run counts only beside a passing run of the same criterion",
+       "base-hides-pr": "its recorded base leaves out commits of the PR"}
+
+
+def why_not(row, head):
+    """The words for a row that does not count; `wrong-sha` names the head it missed and who moves it."""
+    if row["counts"]:
+        return None
+    if row["reason"] == "wrong-sha":
+        if row["kind"] == "test-run" and row["gate"] == "built" and head:
+            return (f"its sha is not the head {head[:7]} (the latest pr row's sha): if {(row['sha'] or '?')[:7]} is "
+                    "the real head, the builder records pr there")
+        return f"its sha does not fit the {row['gate']} gate" + (f" at the head {head[:7]}" if head else "")
+    return WHY.get(row["reason"])
+
+
 def listing(conn, raw_id, gate=None):
     """`trk evidence`: (item id, its rows in seq order, each weighed), optionally one gate's rows only."""
     from . import items
@@ -546,8 +573,9 @@ def listing(conn, raw_id, gate=None):
     item = items.get(conn, raw_id)
     if gate is not None and gate not in gates_of(item):
         raise usage(f"--gate {gate} is not a gate of {item['id']} (its gates: {', '.join(gates_of(item)) or 'none'})")
-    rows = weigh(conn, item).rows
-    return item["id"], [to_json(r) for r in rows if gate is None or r["gate"] == gate]
+    weighing = weigh(conn, item)
+    return item["id"], [{**to_json(r), "why": why_not(r, weighing.head)}
+                        for r in weighing.rows if gate is None or r["gate"] == gate]
 
 
 def get(conn, evidence_id):

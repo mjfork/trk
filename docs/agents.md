@@ -36,7 +36,7 @@ Some gates need a review from someone who did not build the work. trk decides wh
    - When you remove the tree, clear it in the same step: `trk worktree clear <id>`.
    - Before you remove a tree, archive its `tmp/` to the item's `effective_archive`, with `<tree>` replaced by the tree's directory name. When that is null, use `~/work/archive/<tree>-tmp.tgz`. A program sets its own location with `trk edit <program> --archive <path template>`.
 3. **Read the last handoff**, if the work was started before: `trk handoff show <id>`.
-4. **Frame and judge.** A self-contained ticket moves from `framed` to `specd` with `trk advance <id> --judgment "<why it is complete on its own>"`. A spec-bound ticket moves when its project's spec is accepted (see below).
+4. **Frame and judge.** A self-contained ticket moves from `framed` to `specd` with `trk advance <id> --judgment "<why it is complete on its own>"`. The judgment must come from a session that wrote none of the ticket; trk refuses the writer's own (rule `not-independent`). A spec-bound ticket moves when its project's spec is accepted (see below).
 5. **Build** in a branch or worktree. Log every choice that could change correctness as a fork: `trk ledger add <id> --kind fork --decided … --alternative … --why …`.
 6. **Prove it is built.** Record a `pr` evidence row (`--ref <PR or branch> --sha <head>`) and a passing `test-run` row at the same commit. Then `trk advance <id>`.
 7. **Rate the risk.** `trk blast-radius <id>` rates the changed files GREEN, YELLOW or RED, using the lanes in `.trk/blast-radius` in the repo. A change to `.trk/blast-radius` itself always rates RED, whatever the file says at the head.

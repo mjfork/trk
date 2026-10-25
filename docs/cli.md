@@ -142,7 +142,7 @@ options:
 
 ```text
 usage: trk answer [-h] [--as ACTOR] [--session SESSION] [--json]
-                  [--outcome TEXT] [--option N] [--answer @FILE|- |
+                  [--outcome TEXT|@FILE|-] [--option N] [--answer @FILE|- |
                   --from-comment COMMENT]
                   id
 
@@ -154,7 +154,8 @@ options:
   --as ACTOR            writing actor
   --session SESSION     writing session id
   --json                print JSON
-  --outcome TEXT        the answer's gist in one line (required unless
+  --outcome TEXT|@FILE|-
+                        the answer's gist in one line (required unless
                         --option)
   --option N            answer with option N of the ask's options section:
                         outcome "Option N: <label>", body --answer or else the
@@ -186,18 +187,19 @@ options:
 
 ```text
 usage: trk withdraw [-h] [--as ACTOR] [--session SESSION] [--json]
-                    --reason TEXT
+                    --reason TEXT|@FILE|-
                     id
 
 positional arguments:
   id
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --reason TEXT      why, in one line
+  -h, --help            show this help message and exit
+  --as ACTOR            writing actor
+  --session SESSION     writing session id
+  --json                print JSON
+  --reason TEXT|@FILE|-
+                        why, in one line
 ```
 
 ## trk edit
@@ -288,7 +290,7 @@ options:
 ```text
 usage: trk close [-h] [--as ACTOR] [--session SESSION] [--json]
                  --resolution {done,wont-do,superseded,out-of-scope,duplicate}
-                 --outcome TEXT [--by ID] [--of ID]
+                 --outcome TEXT|@FILE|- [--by ID] [--of ID]
                  id
 
 positional arguments:
@@ -300,7 +302,8 @@ options:
   --session SESSION     writing session id
   --json                print JSON
   --resolution {done,wont-do,superseded,out-of-scope,duplicate}
-  --outcome TEXT        the result in one line
+  --outcome TEXT|@FILE|-
+                        the result in one line
   --by ID               superseded: the replacement
   --of ID               duplicate: the original
 ```
@@ -345,21 +348,22 @@ options:
 
 ```text
 usage: trk reopen [-h] [--as ACTOR] [--session SESSION] [--json]
-                  [--reason TEXT] [--to-stage STAGE]
+                  [--reason TEXT|@FILE|-] [--to-stage STAGE]
                   id
 
 positional arguments:
   id
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --reason TEXT      asks: why the answer did not settle it; tickets closed at
-                     verified: why they go back (required for both)
-  --to-stage STAGE   a ticket closed at verified: the earlier stage it goes
-                     back to (required)
+  -h, --help            show this help message and exit
+  --as ACTOR            writing actor
+  --session SESSION     writing session id
+  --json                print JSON
+  --reason TEXT|@FILE|-
+                        asks: why the answer did not settle it; tickets closed
+                        at verified: why they go back (required for both)
+  --to-stage STAGE      a ticket closed at verified: the earlier stage it goes
+                        back to (required)
 ```
 
 ## trk spec
@@ -395,18 +399,19 @@ options:
 
 ```text
 usage: trk spec draft [-h] [--as ACTOR] [--session SESSION] [--json]
-                      [--reason TEXT]
+                      [--reason TEXT|@FILE|-]
                       PROJECT
 
 positional arguments:
   PROJECT
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --reason TEXT      why the spec goes back to draft (required)
+  -h, --help            show this help message and exit
+  --as ACTOR            writing actor
+  --session SESSION     writing session id
+  --json                print JSON
+  --reason TEXT|@FILE|-
+                        why the spec goes back to draft (required)
 ```
 
 ## trk ready
@@ -982,7 +987,7 @@ options:
 
 ```text
 usage: trk criterion retire [-h] [--as ACTOR] [--session SESSION] [--json]
-                            --reason TEXT
+                            --reason TEXT|@FILE|-
                             id ac-N
 
 positional arguments:
@@ -990,11 +995,12 @@ positional arguments:
   ac-N
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --reason TEXT      why, in one line
+  -h, --help            show this help message and exit
+  --as ACTOR            writing actor
+  --session SESSION     writing session id
+  --json                print JSON
+  --reason TEXT|@FILE|-
+                        why, in one line
 ```
 
 ## trk criteria
@@ -1016,58 +1022,63 @@ options:
 
 ```text
 usage: trk advance [-h] [--as ACTOR] [--session SESSION] [--json]
-                   [--judgment NOTE] [--outcome TEXT]
+                   [--judgment NOTE|@FILE|-] [--outcome TEXT|@FILE|-]
                    id
 
 positional arguments:
   id
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --judgment NOTE    a self-contained ticket at framed: judge it complete
-                     (writes the judgment row)
-  --outcome TEXT     into verified (required there): the result in one line;
-                     the ticket closes done
+  -h, --help            show this help message and exit
+  --as ACTOR            writing actor
+  --session SESSION     writing session id
+  --json                print JSON
+  --judgment NOTE|@FILE|-
+                        a self-contained ticket at framed: judge it complete
+                        (writes the judgment row)
+  --outcome TEXT|@FILE|-
+                        into verified (required there): the result in one
+                        line; the ticket closes done
 ```
 
 ## trk skip
 
 ```text
-usage: trk skip [-h] [--as ACTOR] [--session SESSION] [--json] [--reason TEXT]
+usage: trk skip [-h] [--as ACTOR] [--session SESSION] [--json]
+                [--reason TEXT|@FILE|-]
                 id stage
 
 positional arguments:
   id
-  stage              the stage to skip: merged is the only one
+  stage                 the stage to skip: merged is the only one
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --reason TEXT      why, in one line (required)
+  -h, --help            show this help message and exit
+  --as ACTOR            writing actor
+  --session SESSION     writing session id
+  --json                print JSON
+  --reason TEXT|@FILE|-
+                        why, in one line (required)
 ```
 
 ## trk reopen-stage
 
 ```text
 usage: trk reopen-stage [-h] [--as ACTOR] [--session SESSION] [--json]
-                        [--reason TEXT]
+                        [--reason TEXT|@FILE|-]
                         id stage
 
 positional arguments:
   id
-  stage              the earlier stage it goes back to
+  stage                 the earlier stage it goes back to
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --reason TEXT      why, in one line (required)
+  -h, --help            show this help message and exit
+  --as ACTOR            writing actor
+  --session SESSION     writing session id
+  --json                print JSON
+  --reason TEXT|@FILE|-
+                        why, in one line (required)
 ```
 
 ## trk blast-radius
@@ -1098,7 +1109,7 @@ options:
 
 ```text
 usage: trk review record [-h] [--as ACTOR] [--session SESSION] [--json]
-                         [--ref URL] --sha S --note TEXT
+                         [--ref URL] --sha S --note TEXT|@FILE|-
                          id {approved,changes-requested}
 
 positional arguments:
@@ -1112,7 +1123,7 @@ options:
   --json                print JSON
   --ref URL             the GitHub review's URL (default: a direct approval)
   --sha S               the head sha it reviewed
-  --note TEXT           what it says, in one line
+  --note TEXT|@FILE|-   what it says, in one line
 
 Without --ref, a person's direct review: --as must be a person, --sha the
 head, and the head must have a RED rating and an open RED-read ask for --as,
@@ -1145,7 +1156,7 @@ See also `trk evidence add` and `trk evidence retract`.
 usage: trk evidence add [-h] [--as ACTOR] [--session SESSION] [--json]
                         --kind K --gate G [--criterion ac-N] [--ref R]
                         [--sha S] [--verdict {pass,fail}] [--red-first]
-                        --note TEXT
+                        --note TEXT|@FILE|-
                         id
 
 positional arguments:
@@ -1168,14 +1179,14 @@ options:
                         webtester-run, gate verified, with --criterion); it
                         counts only beside a passing run of the same
                         criterion, and never decides the criterion's status
-  --note TEXT           what it shows, in one line
+  --note TEXT|@FILE|-   what it shows, in one line
 ```
 
 ## trk evidence retract
 
 ```text
 usage: trk evidence retract [-h] [--as ACTOR] [--session SESSION] [--json]
-                            --note TEXT
+                            --note TEXT|@FILE|-
                             id EVIDENCE-ID
 
 positional arguments:
@@ -1183,21 +1194,21 @@ positional arguments:
   EVIDENCE-ID
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --note TEXT        why, in one line
+  -h, --help           show this help message and exit
+  --as ACTOR           writing actor
+  --session SESSION    writing session id
+  --json               print JSON
+  --note TEXT|@FILE|-  why, in one line
 ```
 
 ## trk pages
 
 ```text
 usage: trk pages [-h] [--json] [--dirty] [--errors]
-                 {setup,flush,pull,authors,reply,tidy,tick,timer,render,republish} ...
+                 {setup,flush,pull,authors,reply,tidy,status,tick,timer,render,republish} ...
 
 positional arguments:
-  {setup,flush,pull,authors,reply,tidy,tick,timer,render,republish}
+  {setup,flush,pull,authors,reply,tidy,status,tick,timer,render,republish}
     setup               configure publishing and check the page adapter (trk
                         stores no secret)
     flush               publish due pages
@@ -1208,6 +1219,9 @@ positional arguments:
                         dismiss it
     tidy                resolve the threads of asks already closed, on one
                         page
+    status              is publishing set up and working: the adapter, its
+                        expiry, pages waiting or failing, the last publish,
+                        and the timer
     tick                pull, then flush (the timer's command)
     timer               the timer that runs `trk pages tick` every minute (a
                         systemd user timer; a launchd agent on macOS)
@@ -1285,19 +1299,20 @@ options:
 
 ```text
 usage: trk pages reply [-h] [--as ACTOR] [--session SESSION] [--json]
-                       [--reason TEXT]
+                       [--reason TEXT|@FILE|-]
                        {resend,dismiss} REPLY-ID
 
 positional arguments:
   {resend,dismiss}
-  REPLY-ID           as `trk pages --errors` lists it
+  REPLY-ID              as `trk pages --errors` lists it
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --reason TEXT      dismiss: why it needs no reply, in one line (required)
+  -h, --help            show this help message and exit
+  --as ACTOR            writing actor
+  --session SESSION     writing session id
+  --json                print JSON
+  --reason TEXT|@FILE|-
+                        dismiss: why it needs no reply, in one line (required)
 ```
 
 ## trk pages tidy
@@ -1317,6 +1332,18 @@ options:
   --session SESSION  writing session id
   --json             print JSON
   --dry-run          list the threads it would close and change nothing
+```
+
+## trk pages status
+
+```text
+usage: trk pages status [-h] [--as ACTOR] [--session SESSION] [--json]
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR         writing actor
+  --session SESSION  writing session id
+  --json             print JSON
 ```
 
 ## trk pages tick
@@ -1409,10 +1436,11 @@ options:
 
 ```text
 usage: trk ledger add [-h] [--as ACTOR] [--session SESSION] [--json] --kind K
-                      [--decided TEXT] [--alternative TEXT] [--why TEXT]
-                      [--would-have-asked TEXT] [--conflicts-with REF]
-                      [--file PATH] [--sha S] [--origin O] [--noise]
-                      [--repeat-of TICKET:N] [--topic TEXT] [--refers-to N]
+                      [--decided TEXT|@FILE|-] [--alternative TEXT|@FILE|-]
+                      [--why TEXT|@FILE|-] [--would-have-asked TEXT]
+                      [--conflicts-with REF] [--file PATH] [--sha S]
+                      [--origin O] [--noise] [--repeat-of TICKET:N]
+                      [--topic TEXT] [--refers-to N]
                       id
 
 positional arguments:
@@ -1424,9 +1452,11 @@ options:
   --session SESSION     writing session id
   --json                print JSON
   --kind K              fork, contradiction or reward-hack
-  --decided TEXT        what was decided, in one line
-  --alternative TEXT    what else was weighed (repeatable; a fork needs one)
-  --why TEXT            why, in one line
+  --decided TEXT|@FILE|-
+                        what was decided, in one line
+  --alternative TEXT|@FILE|-
+                        what else was weighed (repeatable; a fork needs one)
+  --why TEXT|@FILE|-    why, in one line
   --would-have-asked TEXT
                         the question you would have asked
   --conflicts-with REF  a contradiction's ADR path or spec:<section>
@@ -1458,75 +1488,76 @@ options:
 
 ```text
 usage: trk ledger verdict [-h] [--as ACTOR] [--session SESSION] [--json]
-                          [--note TEXT] [--sha S]
+                          [--note TEXT|@FILE|-] [--sha S]
                           id N verdict
 
 positional arguments:
   id
   N
-  verdict            sound, risky or wrong; confirmed or refuted on a reward-
-                     hack flag
+  verdict              sound, risky or wrong; confirmed or refuted on a
+                       reward-hack flag
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --note TEXT        why, in one line (required)
-  --sha S            the commit judged (default: the head sha)
+  -h, --help           show this help message and exit
+  --as ACTOR           writing actor
+  --session SESSION    writing session id
+  --json               print JSON
+  --note TEXT|@FILE|-  why, in one line (required)
+  --sha S              the commit judged (default: the head sha)
 ```
 
 ## trk ledger settle
 
 ```text
 usage: trk ledger settle [-h] [--as ACTOR] [--session SESSION] [--json]
-                         [--sha S] [--ask ID] [--adr PATH] [--note TEXT]
+                         [--sha S] [--ask ID] [--adr PATH]
+                         [--note TEXT|@FILE|-]
                          id N settlement
 
 positional arguments:
   id
   N
-  settlement         fixed, deferred (files a ticket for the row), accepted or
-                     overruled
+  settlement           fixed, deferred (files a ticket for the row), accepted
+                       or overruled
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --sha S            fixed: the fix commit
-  --ask ID           the answered engineering ask tied to the row (accepted,
-                     overruled, and fixed on a contradiction, unless an
-                     auditor settles a contradiction it raised after its own
-                     sound verdict at the fix)
-  --adr PATH         accepted: the ADR amended or superseded because the code
-                     wins
-  --note TEXT        one line
+  -h, --help           show this help message and exit
+  --as ACTOR           writing actor
+  --session SESSION    writing session id
+  --json               print JSON
+  --sha S              fixed: the fix commit
+  --ask ID             the answered engineering ask tied to the row (accepted,
+                       overruled, and fixed on a contradiction, unless an
+                       auditor settles a contradiction it raised after its own
+                       sound verdict at the fix)
+  --adr PATH           accepted: the ADR amended or superseded because the
+                       code wins
+  --note TEXT|@FILE|-  one line
 ```
 
 ## trk ledger audit
 
 ```text
 usage: trk ledger audit [-h] [--as ACTOR] [--session SESSION] [--json]
-                        --note TEXT
+                        --note TEXT|@FILE|-
                         id
 
 positional arguments:
   id
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --note TEXT        what the audit covered, in one line
+  -h, --help           show this help message and exit
+  --as ACTOR           writing actor
+  --session SESSION    writing session id
+  --json               print JSON
+  --note TEXT|@FILE|-  what the audit covered, in one line
 ```
 
 ## trk ledger withdraw
 
 ```text
 usage: trk ledger withdraw [-h] [--as ACTOR] [--session SESSION] [--json]
-                           --reason TEXT
+                           --reason TEXT|@FILE|-
                            id N
 
 positional arguments:
@@ -1534,11 +1565,12 @@ positional arguments:
   N
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --reason TEXT      why, in one line
+  -h, --help            show this help message and exit
+  --as ACTOR            writing actor
+  --session SESSION     writing session id
+  --json                print JSON
+  --reason TEXT|@FILE|-
+                        why, in one line
 ```
 
 ## trk ledger promote

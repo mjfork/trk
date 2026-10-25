@@ -340,3 +340,48 @@ def test_a_builder_withdraws_only_rows_its_own_session_wrote(trk, world):
     assert refusal(trk, "ledger", "withdraw", t, "1", "--reason", "not mine", *as_(Z))["rule"] == "not-own-row"
     ok(trk, "ledger", "withdraw", t, "2", "--reason", "mine", *as_(Z))
     ok(trk, "ledger", "withdraw", t, "1", "--reason", "a person", "--as", "michael")
+
+
+# --- a spec judgment comes from a session that wrote none of the spec (UP-0008) ---
+
+def self_contained(trk, world, session):
+    from gated import ticket
+
+    return ok(trk, "new", "work-item", "S", "--form", "self-contained", "--parent", world, *ticket("self-contained"),
+              *as_(session))
+
+
+def test_the_session_that_wrote_a_ticket_cannot_judge_it_complete(trk, world):
+    s = self_contained(trk, world, W)
+    error = refusal(trk, "advance", s, "--judgment", "Complete.", *as_(W))
+    assert error["rule"] == "not-independent" and W in error["message"]
+    ok(trk, "advance", s, "--judgment", "Complete.", *as_(X))
+
+
+def test_an_edit_of_the_spec_makes_that_session_a_writer_too(trk, world):
+    from gated import section_file
+
+    s = self_contained(trk, world, W)
+    ok(trk, "section", "set", s, "desired-behaviour", "--file", str(section_file("desired-behaviour", "Edited.\n")),
+       *as_(X))
+    assert refusal(trk, "advance", s, "--judgment", "Complete.", *as_(X))["rule"] == "not-independent"
+
+
+def test_an_agent_judging_a_spec_needs_a_session_and_a_person_does_not(trk, world):
+    s = self_contained(trk, world, W)
+    assert refusal(trk, "advance", s, "--judgment", "Complete.", "--as", "worker")["rule"] == "session-required"
+    ok(trk, "advance", s, "--judgment", "Complete.", "--as", "michael")
+
+
+def test_a_project_spec_is_accepted_only_by_a_session_that_wrote_none_of_it(trk):
+    from gated import PROJECT_SECTIONS, section_file
+
+    ok(trk, "init", "--me", "michael")
+    ok(trk, "actor", "add", "worker", "--kind", "agent")
+    p = ok(trk, "new", "program", "P", *DEST)
+    j = ok(trk, "new", "project", "J", "--parent", p, *DEST)
+    for handle in PROJECT_SECTIONS:
+        ok(trk, "section", "set", j, handle, "--file", str(section_file(handle)), *as_(W))
+    accept = ("evidence", "add", j, "--kind", "judgment", "--gate", "accept", "--verdict", "pass", "--note", "ok")
+    assert refusal(trk, *accept, *as_(W))["rule"] == "not-independent"
+    ok(trk, *accept, *as_(X))

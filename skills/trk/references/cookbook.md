@@ -62,7 +62,7 @@ for h in problem solution user-stories implementation-decisions testing-decision
   T section set <project> $h --file tmp/spec/$h.md --as A
 done
 T criterion add <project> "<end-to-end check>" --as A
-# from a different session than the writer:
+# from a session that wrote none of the spec (trk refuses the writer's own: rule not-independent):
 T evidence add <project> --kind judgment --gate accept --verdict pass \
   --note "<review summary>" --as A
 T spec accept <project> --as A
@@ -83,6 +83,7 @@ Bug report (self-contained):
 T new work-item "<title>" --form self-contained --parent <project-or-program> --as A \
   --section current-behaviour=@tmp/cur.md --section desired-behaviour=@tmp/want.md \
   --criterion "<check>"
+# from a session that wrote none of the ticket (not the one that ran `new` above):
 T advance <id> --judgment "<why it is self-contained>" --as A
 ```
 

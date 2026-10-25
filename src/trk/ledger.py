@@ -790,8 +790,15 @@ def review_needs(conn, row, weighing):
                     "ledger": label}
             if settlements and settlements[-1]["seq"] > verdicts[-1]["seq"] and settlements[-1]["settlement"] == "fixed":
                 fix = settlements[-1]["sha"]  # settled again after the latest verdict: that verdict does not cover it
-                need.update(sha=fix, hint=f"fix {fix} was settled after the latest verdict: the auditor must "
-                                          "re-verdict after the new settlement")
+                above = [v for v in outside if v["seq"] > settlements[-1]["seq"]]
+                if above:  # the auditor did re-verdict, above the head: the builder moves the head, not the auditor
+                    sha = above[-1]["sha"]
+                    need.update(sha=sha, hint=f"the auditor re-verdicted at {sha}, above the head {head}: no pr "
+                                              f"evidence at {sha}, so the builder records pr and a passing test-run "
+                                              f"at {sha}")
+                else:
+                    need.update(sha=fix, hint=f"fix {fix} was settled after the latest verdict: the auditor must "
+                                              "re-verdict after the new settlement")
             missing.append(need)
     return missing
 

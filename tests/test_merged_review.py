@@ -707,3 +707,31 @@ def test_ac3_a_row_re_settled_fixed_after_its_sound_verdict_says_the_auditor_mus
     assert "re-verdict after the new settlement" in need["hint"] and again in need["hint"]
     judge(trk, t, n, "sound", "--sha", again)
     assert ledger_needs(trk, t) == []
+
+
+def test_a_re_verdict_above_the_head_names_the_builders_missing_pr_not_the_auditor(trk, lane):
+    """UP-0009: the auditor re-verdicted at the new fix, but no pr row moved the head there: the builder acts."""
+    t, sha = lane["ticket"]()
+    n = fork(trk, t)
+    judge(trk, t, n, "wrong")
+    reviewed(trk, t, sha)
+    fix = fix_commit(trk, lane, t, "src/c.py")
+    settle(trk, t, n, "fixed", "--sha", fix, who=W)
+    judge(trk, t, n, "sound", "--sha", fix)
+    again = commit(lane["path"], "src/d.py")              # fixed again, with no pr row at it
+    settle(trk, t, n, "fixed", "--sha", again, who=W)
+    judge(trk, t, n, "sound", "--sha", again)
+    (need,) = [m for m in missing(trk, t) if m.get("ledger") == n]
+    assert need["sha"] == again and "no pr evidence at" in need["hint"] and "the builder records pr" in need["hint"]
+    assert "the auditor must" not in need["hint"]
+
+
+def test_a_test_run_off_the_head_says_why_it_does_not_count(trk, lane):
+    t, sha = lane["ticket"]()
+    above = commit(lane["path"], "src/e.py")
+    ok(trk, "evidence", "add", t, "--kind", "test-run", "--gate", "built", "--ref", "none", "--sha", above,
+       "--verdict", "pass", "--note", "tests", *W)
+    (row,) = [r for r in trk("evidence", t, "--json").json()["evidence"] if r["sha"] == above]
+    assert row["counts"] is False and row["reason"] == "wrong-sha"
+    assert sha[:7] in row["why"] and "the builder records pr there" in row["why"]
+    assert "not counted (wrong-sha: its sha is not the head" in trk("evidence", t).out

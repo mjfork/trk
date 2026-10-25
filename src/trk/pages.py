@@ -150,6 +150,24 @@ def page_key(conn, raw):
     return needs_you.resolve_key(conn, raw) or items.get(conn, raw)["id"]
 
 
+def status(st):
+    """Whether publishing is set up and working: the adapter, its credentials' expiry, and the pages'
+    counts. An install's check: set up, nothing failing, and a recent last publish."""
+    if not is_set_up(st):
+        return {"set_up": False}
+    rows = listing(st.conn)
+    told = described(st)
+    published = [r["published_at"] for r in rows if r["published_at"]]
+    return {"set_up": True, "adapter": told.get("name") or adapter_command(st).split()[0],
+            "command": adapter_command(st), "capabilities": told.get("capabilities") or [],
+            "team": st.meta("publish_team"), "home": st.meta("publish_home"),
+            "expires": st.meta("publish_expires") or None, "pages": len(rows),
+            "dirty": sum(r["dirty"] for r in rows),
+            "errors": sum(bool(r["last_error"]) for r in rows),
+            "failed_replies": len(failed_replies(st.conn)),
+            "last_published_at": max(published) if published else None}
+
+
 def listing(conn, *, dirty_only=False, errors_only=False):
     """Every page-bearing item in tree order (closed ones too), with its page bookkeeping. An item
     with no `pages` row has never been published and is dirty, due at once."""

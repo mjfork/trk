@@ -61,7 +61,10 @@ Copy-paste command patterns for every step are in
    (tr-1ax2j)`. Ids stay plain text.
 7. **Bodies are markdown via stdin or a file** (`--file F`, `HANDLE=@F`,
    `HANDLE=-`), at most 256 KiB. `--note` and `--outcome` take at most 300
-   characters. Write long bodies to `tmp/` first; never put
+   characters. Every one-line text flag (`--note`, `--judgment`, `--decided`, `--outcome`, `--why`,
+   `--alternative`, `--reason`) also takes `@file` or `-`: put text holding `; ( ) + :` or quotes in a
+   file and pass `--note @tmp/note.txt` rather than rewording it to get past a permission check.
+   Write long bodies to `tmp/` first; never put
    secrets in a body or handoff (pages are visible to everyone the publisher shares them with).
 
 ## 2. The hierarchy in one screen
@@ -183,7 +186,9 @@ GREEN need no brief.
 ## 5. Specs, projects and programs
 
 - Write the six spec sections and at least one end-to-end `criterion add`.
-- Acceptance is a judgment from someone other than the writer: `evidence add
+- Acceptance is a judgment from a session that wrote none of the spec (trk refuses the writer's own, rule
+  `not-independent`; an agent needs a session for the check, `session-required`). The same holds for
+  `advance --judgment` on a self-contained ticket: `evidence add
   <project> --kind judgment --gate accept --verdict pass --note "<review
   summary>"`, then `trk spec accept <project>`. Its Framed tickets move to
   Spec'd. `trk spec draft <project> --reason …` sends it back.

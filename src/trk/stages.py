@@ -242,6 +242,41 @@ def gate_json(conn, row):
     return {"next": following, "missing": gate(conn, row, following) if following in GATES else []}
 
 
+def spec_handles(row, gate):
+    """The sections a spec judgment judges: a project's spec at `accept`, a ticket's written sections at `specd`."""
+    return SPEC_SECTIONS if gate == "accept" else WRITTEN.get(row["form"], ())
+
+
+def spec_writers(conn, row, gate):
+    """The sessions that wrote any of the sections a `gate` judgment judges, from the sections' own writes."""
+    handles = set(spec_handles(row, gate))
+    found = set()
+    for write in conn.execute("SELECT change, session, data FROM journal WHERE item = ? AND session IS NOT NULL"
+                              " AND change IN ('item.created', 'item.updated')", (row["id"],)):
+        data = json.loads(write["data"])
+        written = (data.get("sections") or () if write["change"] == "item.created"
+                   else [f[len("section:"):] for f in data.get("fields", ()) if f.startswith("section:")])
+        if handles & set(written):
+            found.add(write["session"])
+    return found
+
+
+def check_spec_judge(tx, row, gate):
+    """A spec judgment (`accept` or `specd`) comes from a session that wrote none of the sections it judges
+    (rule `not-independent`): agents share an actor, so independence is by session. An agent needs a session
+    for the check (rule `session-required`); a person at a terminal, with no session, may judge."""
+    from . import actors
+
+    if not tx.session:
+        if actors.kind(tx.conn, tx.actor) == "agent":
+            raise refused("session-required", f"a spec judgment by an agent needs a session (--session or "
+                          "$TRK_SESSION): independence from the spec's writer is checked by session", item=row["id"])
+        return
+    if tx.session in spec_writers(tx.conn, row, gate):
+        raise refused("not-independent", f"session {tx.session} wrote {row['id']}'s spec; its judgment needs a "
+                      "session that wrote none of it (a separate Claude session, not a subagent)", item=row["id"])
+
+
 def advance(tx, raw_id, judgment=None, outcome=None):
     """`advance`: move a ticket exactly one stage forward when that stage's gate holds (rule `gate-unmet`
     with the missing list otherwise, nothing written). `judgment` first writes the `judgment` row that
@@ -269,6 +304,7 @@ def advance(tx, raw_id, judgment=None, outcome=None):
         if row["form"] != "self_contained" or row["stage"] != "framed":
             raise usage("--judgment judges a self-contained ticket at framed complete; "
                         f"{item_id} is a {items.FORM_OUT[row['form']]} ticket at {row['stage']}")
+        check_spec_judge(tx, row, "specd")
         evidence.record(tx, row, "judgment", "specd", verdict="pass", note=evidence.check_note(judgment, "--judgment"))
     missing = gate(tx.conn, row, target)
     if missing:

@@ -95,7 +95,7 @@ def test_accept_moves_framed_tickets_to_specd_and_records_the_acceptor(trk, worl
     assert item(trk, t)["stage"] == "framed"
     write_spec(trk, world["K"])
     ok(trk, "criterion", "add", world["K"], "It ships.")
-    judgment = judge(trk, world["K"], "accept", "--as", "worker")
+    judgment = judge(trk, world["K"], "accept", "--as", "worker", "--session", "33333333-3333-4333-8333-333333333333")
     since = head(trk)
     ok(trk, "spec", "accept", world["K"])
     assert item(trk, world["K"])["spec_state"] == "accepted"

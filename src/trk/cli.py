@@ -458,6 +458,10 @@ def build_parser():
     pages_tidy.add_argument("id", help="an item id, or needs-you:<actor> for a person's Needs-you page")
     pages_tidy.add_argument("--dry-run", action="store_true", help="list the threads it would close and change nothing")
     pages_tidy.set_defaults(handler=cmd_pages_tidy)
+    pages_status = pages_verbs.add_parser("status", parents=[common],
+                                          help="is publishing set up and working: the adapter, its expiry, "
+                                               "pages waiting or failing, the last publish, and the timer")
+    pages_status.set_defaults(handler=cmd_pages_status)
     pages_tick = pages_verbs.add_parser("tick", parents=[common], help="pull, then flush (the timer's command)")
     pages_tick.set_defaults(handler=cmd_pages_tick)
     pages_timer = pages_verbs.add_parser("timer", parents=[common],
@@ -492,6 +496,7 @@ def build_parser():
     changes.add_argument("--limit", type=_count(1), default=feed.DEFAULT_LIMIT, metavar="N",
                          help=f"at most N rows (default {feed.DEFAULT_LIMIT})")
     changes.set_defaults(handler=cmd_changes)
+    _advertise_text_sources(parser)
     return parser
 
 
@@ -645,6 +650,16 @@ def _section_flags(flags):
 
 # One-line free-text flags (by argparse dest) that also take `@file` or `-`, like `--question`.
 TEXT_FLAGS = ("note", "outcome", "decided", "why", "alternative", "judgment", "reason")
+
+
+def _advertise_text_sources(parser):
+    """Every one-line text flag's help says it takes @file or -, so an agent finds it in --help."""
+    for action in parser._actions:
+        if action.dest in TEXT_FLAGS and action.option_strings and "@FILE" not in (action.metavar or ""):
+            action.metavar = f"{action.metavar or 'TEXT'}|@FILE|-"
+        if isinstance(getattr(action, "choices", None), dict):
+            for sub in action.choices.values():
+                _advertise_text_sources(sub)
 
 
 def _text_flags(args):
@@ -1383,7 +1398,8 @@ def _evidence_line(row):
     if row["criterion"]:
         parts.append(f"{row['criterion']} (v{row['criterion_version']})")
     parts += [evidence.verdict_label(row), row["sha"] and row["sha"][:7], row["ref"]]
-    parts.append("counts" if row["counts"] else f"not counted ({row['reason']})")
+    parts.append("counts" if row["counts"] else
+                 f"not counted ({row['reason']}" + (f": {row['why']}" if row.get("why") else "") + ")")
     return "  ".join(part for part in parts if part) + f"  — {row['note']}"
 
 
@@ -1413,6 +1429,36 @@ def cmd_pages(args):
                   f"comment {reply['comment']}  "
                   f"ask {reply['ask'] or '-'}  {reply['reason'] or 'refused'}  "
                   f"(`trk pages reply resend|dismiss {reply['reply']}`)")
+
+
+def cmd_pages_status(args):
+    from . import pages, timer
+
+    st = store.open_store()
+    try:
+        done = pages.status(st)
+    finally:
+        st.close()
+    try:
+        done["timer"] = timer.status()
+    except TrkError as exc:             # no systemctl or launchctl here: say so, the rest still holds
+        done["timer"] = {"error": str(exc)}
+    if args.json:
+        _print_json({"schema": 1, **done})
+        return
+    t = done["timer"]
+    timer_line = (f"timer {timer.name()}: " + (f"unknown ({t['error']})" if "error" in t else
+                  f"{'installed' if t['installed'] else 'not installed'}, {t['active']}"))
+    if not done["set_up"]:
+        print("publishing is not set up: run `trk pages setup --adapter COMMAND --home ID`")
+        print(timer_line)
+        return
+    caps = ", ".join(done["capabilities"]) or "publish only"
+    print(f"publishing set up: {done['adapter']} ({caps}), team {done['team']}, home {done['home']}"
+          + (f", credentials expire {done['expires']}" if done["expires"] else ""))
+    print(f"pages: {done['pages']}, {done['dirty']} waiting, {done['errors']} failing, "
+          f"{done['failed_replies']} replies failed; last publish {done['last_published_at'] or 'never'}")
+    print(timer_line)
 
 
 def cmd_pages_reply(args):
