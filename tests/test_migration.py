@@ -592,3 +592,20 @@ def _written(home):
     path = home.parent / "question.md"
     path.write_text("Which readers drop keys?\n")
     return path
+
+
+# --- schema 13 (UP-0011): claims gain scope; a store already at 12 (items rebuilt) takes only that step ---
+
+def test_a_schema_12_store_gains_claim_scope_and_claims_work(trk, v5_store, monkeypatch):
+    current = store.SCHEMA_VERSION
+    monkeypatch.setattr(store, "SCHEMA_VERSION", 12)
+    trk("changes", "--since", "0")
+    assert query(v5_store, "SELECT value FROM meta WHERE key = 'schema_version'")[0][0] == "12"
+    assert "scope" not in {r["name"] for r in query(v5_store, "PRAGMA table_info(claims)")}
+    monkeypatch.setattr(store, "SCHEMA_VERSION", current)
+    trk("changes", "--since", "0")
+    assert query(v5_store, "SELECT value FROM meta WHERE key = 'schema_version'")[0][0] == "13"
+    assert query(v5_store, "PRAGMA foreign_key_check") == []
+    program = query(v5_store, "SELECT id FROM items WHERE kind = 'program'")[0]["id"]
+    assert trk("claim", program, "--force", "--session", "s-1", "--as", "michael").code == 0
+    assert tuple(query(v5_store, "SELECT scope FROM claims")[0]) == ("build",)

@@ -12,7 +12,7 @@ from pathlib import Path
 from . import claims, clock, config, ids, roles, spawn  # config and roles import store back; all bind modules only
 from .errors import conflict, not_found, refused, usage
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 DEFAULT_LEASE_MINUTES = 60
 BUSY_TIMEOUT_MS = 10_000
 
@@ -529,14 +529,12 @@ def _schema_10_to_11(tx):
 
 
 def _schema_11_to_12(tx):
-    """Spec-scope claims (upstream ask UP-0011): claims gain `scope`, every existing claim a `build` one.
-    Findings items and moot closes (upstream ask UP-0018): the items table's checks widen to form `findings`,
+    """Findings items and moot closes (upstream ask UP-0018): the items table's checks widen to form `findings`,
     stage `reviewed` and resolution `moot`. SQLite changes a check only by rebuilding the table, so items is
     copied into a table built from SCHEMA's definition, by column name (older stores added columns in another
     order), then swapped in. _migrate turns foreign keys off around the transaction, as the rebuild needs; the
     references are checked here before it commits. No row changes, so the step journals none."""
     conn = tx.conn
-    conn.execute("ALTER TABLE claims ADD COLUMN scope TEXT NOT NULL DEFAULT 'build' CHECK (scope IN ('spec', 'build'))")
     create = next(st for st in _statements(SCHEMA) if st.startswith("CREATE TABLE items ("))
     conn.execute(create.replace("CREATE TABLE items (", "CREATE TABLE items_new (", 1))
     columns = [r["name"] for r in conn.execute("PRAGMA table_info(items)")]
@@ -548,6 +546,12 @@ def _schema_11_to_12(tx):
     broken = conn.execute("PRAGMA foreign_key_check").fetchall()
     if broken:
         raise refused("migration-failed", f"schema 12: {len(broken)} references broke rebuilding items; nothing changed")
+
+
+def _schema_12_to_13(tx):
+    """Spec-scope claims (upstream ask UP-0011): claims gain `scope`, every existing claim a `build` one.
+    No row changes, so the step journals none."""
+    tx.conn.execute("ALTER TABLE claims ADD COLUMN scope TEXT NOT NULL DEFAULT 'build' CHECK (scope IN ('spec', 'build'))")
 
 
 WORKTREE_COLUMNS = ("worktree_path", "worktree_branch", "worktree_repo", "worktree_session", "worktree_at")
@@ -576,7 +580,7 @@ def add_actor(tx, actor_id, kind, display):
 # are journaled and feed.head is rewritten like any other write.
 MIGRATIONS = {1: _schema_1_to_2, 2: _schema_2_to_3, 3: _schema_3_to_4, 4: _schema_4_to_5, 5: _schema_5_to_6,
               6: _schema_6_to_7, 7: _schema_7_to_8, 8: _schema_8_to_9, 9: _schema_9_to_10, 10: _schema_10_to_11,
-              11: _schema_11_to_12}
+              11: _schema_11_to_12, 12: _schema_12_to_13}
 
 
 def default_dir():
