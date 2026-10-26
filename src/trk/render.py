@@ -30,7 +30,8 @@ RESERVED_PREFIXES = ("child-", "ask-", "ac-", "evidence-", "ledger-", "stage-", 
 OPEN_SECTION = {"program": ("destination",), "project": ("acceptance-criteria",),
                 "ticket": ("what-to-build", "desired-behaviour"), "decision": ("question",)}
 
-STAGE_LABEL = {"framed": "Framed", "specd": "Spec'd", "built": "Built", "merged": "Merged", "verified": "Verified"}
+STAGE_LABEL = {"framed": "Framed", "specd": "Spec'd", "built": "Built", "merged": "Merged", "reviewed": "Reviewed",
+               "verified": "Verified"}
 
 
 def page_kind(row):
@@ -340,7 +341,7 @@ class _Page:
         tickets = [r for r in self.subtree(self.row["id"]) if stages.is_ticket(r)]
         done = sum(1 for r in tickets if r["resolution"] == "done")
         cells = "".join(f'<li><span class="n">{sum(1 for r in tickets if r["stage"] == stage)}</span>'
-                        f'<span class="l">{STAGE_LABEL[stage]}</span></li>' for stage in stages.STAGES)
+                        f'<span class="l">{STAGE_LABEL[stage]}</span></li>' for stage in stages.ALL_STAGES)
         return (f'<ol class="funnel"{_attr("stage-funnel")}>{cells}</ol>\n'
                 + self.tile(f"{done}/{len(tickets)}", "tickets done"))
 
@@ -348,9 +349,10 @@ class _Page:
         row = self.row
         if row["stage"] is None:  # closed before stages existed
             return self.tile(_e(row["status"]), "status")
-        reached = stages.STAGES.index(row["stage"])
+        route = stages.route(row)
+        reached = route.index(row["stage"])
         cells = []
-        for index, stage in enumerate(stages.STAGES):
+        for index, stage in enumerate(route):
             state = "reached" if index < reached else "current" if index == reached else "ahead"
             latest = self.latest_counting(row, stage)
             result = ""

@@ -398,3 +398,41 @@ def test_a_project_spec_is_accepted_only_by_a_session_that_wrote_none_of_it(trk)
     accept = ("evidence", "add", j, "--kind", "judgment", "--gate", "accept", "--verdict", "pass", "--note", "ok")
     assert refusal(trk, *accept, *as_(W))["rule"] == "not-independent"
     ok(trk, *accept, *as_(X))
+
+
+# --- UP-0011: a spec-scope claim on a blocked ticket ---
+
+def test_a_spec_claim_is_granted_on_a_blocked_ticket_and_a_build_claim_is_not(trk, world):
+    t, blocker = new_ticket(trk, world), new_ticket(trk, world, "B")
+    ok(trk, "link", blocker, "blocks", t)
+    assert refusal(trk, "claim", t, *as_(W))["rule"] == "not-ready"
+    ok(trk, "claim", t, "--scope", "spec", *as_(W))
+    assert trk("show", t, "--json").json()["item"]["claim"]["scope"] == "spec"
+    assert refusal(trk, "claim", t, *as_(W))["rule"] == "not-ready"     # still blocked: no upgrade
+    assert refusal(trk, "claim", t, "--scope", "spec", *as_(X), code=4)["rule"] == "claimed"
+
+
+def test_a_spec_claim_refuses_builder_writes_until_upgraded(trk, world):
+    t = new_ticket(trk, world)
+    ok(trk, "claim", t, "--scope", "spec", *as_(W))
+    for write in sorted(WRITES):
+        assert refusal(trk, *WRITES[write](t), *as_(W))["rule"] == "spec-scope"
+    ok(trk, "claim", t, *as_(W))                                            # ready: the same session upgrades
+    assert trk("show", t, "--json").json()["item"]["claim"]["scope"] == "build"
+    ok(trk, *WRITES["pr"](t), *as_(W))
+    ok(trk, "claim", t, "--scope", "spec", *as_(W))                         # never a downgrade
+    assert trk("show", t, "--json").json()["item"]["claim"]["scope"] == "build"
+
+
+def test_a_spec_claim_makes_no_builder(trk, world):
+    t = new_ticket(trk, world)
+    ok(trk, "claim", t, "--scope", "spec", *as_(X))
+    ok(trk, "claim", "release", t, *as_(X))
+    ok(trk, "claim", t, *as_(W))
+    ok(trk, *WRITES["pr"](t), *as_(W))
+    ok(trk, "ledger", "add", t, "--kind", "fork", "--decided", "d", "--alternative", "a", "--why", "w",
+       "--origin", "auditor", *as_(X, "auditor"))                           # X only wrote the spec: still independent
+
+
+def test_next_takes_no_spec_scope(trk, world):
+    assert trk("claim", "--next", "--scope", "spec", *as_(W)).code == 2

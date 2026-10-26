@@ -12,7 +12,7 @@ from pathlib import Path
 from . import claims, clock, config, ids, roles, spawn  # config and roles import store back; all bind modules only
 from .errors import conflict, not_found, refused, usage
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 DEFAULT_LEASE_MINUTES = 60
 BUSY_TIMEOUT_MS = 10_000
 
@@ -72,7 +72,7 @@ CREATE TABLE actors (
 CREATE TABLE items (
     id         TEXT PRIMARY KEY,
     kind       TEXT NOT NULL CHECK (kind IN ('program', 'project', 'work_item')),
-    form       TEXT CHECK (form IN ('spec_bound', 'self_contained', 'decision', 'ask')),
+    form       TEXT CHECK (form IN ('spec_bound', 'self_contained', 'findings', 'decision', 'ask')),
     subtype    TEXT CHECK (subtype IN ('research', 'prototype', 'grilling', 'task')),
     title      TEXT NOT NULL,
     parent_id  TEXT REFERENCES items (id),
@@ -80,7 +80,7 @@ CREATE TABLE items (
     urgent     INTEGER NOT NULL DEFAULT 0 CHECK (urgent IN (0, 1)),
     owner      TEXT REFERENCES actors (id),
     status     TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
-    resolution TEXT CHECK (resolution IN ('done', 'wont_do', 'superseded', 'out_of_scope', 'duplicate')),
+    resolution TEXT CHECK (resolution IN ('done', 'wont_do', 'superseded', 'out_of_scope', 'duplicate', 'moot')),
     outcome    TEXT,
     spec_state TEXT CHECK (spec_state IN ('draft', 'accepted')),
     jira_url   TEXT,
@@ -89,7 +89,7 @@ CREATE TABLE items (
     closed_at  TEXT,
     addressee_role TEXT,
     asker      TEXT REFERENCES actors (id),
-    stage      TEXT CHECK (stage IN ('framed', 'specd', 'built', 'merged', 'verified')),
+    stage      TEXT CHECK (stage IN ('framed', 'specd', 'built', 'merged', 'reviewed', 'verified')),
     merged_skipped INTEGER NOT NULL DEFAULT 0 CHECK (merged_skipped IN (0, 1)),
     red_ask    TEXT REFERENCES items (id),
     client     TEXT,
@@ -138,6 +138,7 @@ CREATE TABLE claims (
     lease_until   TEXT NOT NULL,
     ended_at      TEXT,
     "end"         TEXT CHECK ("end" IN ('released', 'expired')),
+    scope         TEXT NOT NULL DEFAULT 'build' CHECK (scope IN ('spec', 'build')),
     CHECK ((ended_at IS NULL) = ("end" IS NULL))
 );
 CREATE UNIQUE INDEX claims_live_by_item ON claims (item_id) WHERE ended_at IS NULL;
@@ -527,6 +528,28 @@ def _schema_10_to_11(tx):
         tx.conn.execute(statement)
 
 
+def _schema_11_to_12(tx):
+    """Spec-scope claims (upstream ask UP-0011): claims gain `scope`, every existing claim a `build` one.
+    Findings items and moot closes (upstream ask UP-0018): the items table's checks widen to form `findings`,
+    stage `reviewed` and resolution `moot`. SQLite changes a check only by rebuilding the table, so items is
+    copied into a table built from SCHEMA's definition, by column name (older stores added columns in another
+    order), then swapped in. _migrate turns foreign keys off around the transaction, as the rebuild needs; the
+    references are checked here before it commits. No row changes, so the step journals none."""
+    conn = tx.conn
+    conn.execute("ALTER TABLE claims ADD COLUMN scope TEXT NOT NULL DEFAULT 'build' CHECK (scope IN ('spec', 'build'))")
+    create = next(st for st in _statements(SCHEMA) if st.startswith("CREATE TABLE items ("))
+    conn.execute(create.replace("CREATE TABLE items (", "CREATE TABLE items_new (", 1))
+    columns = [r["name"] for r in conn.execute("PRAGMA table_info(items)")]
+    listed = ", ".join(columns)
+    conn.execute(f"INSERT INTO items_new ({listed}) SELECT {listed} FROM items")
+    conn.execute("DROP TABLE items")
+    conn.execute("ALTER TABLE items_new RENAME TO items")
+    conn.execute(next(st for st in _statements(SCHEMA) if st.startswith("CREATE INDEX items_by_parent")))
+    broken = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if broken:
+        raise refused("migration-failed", f"schema 12: {len(broken)} references broke rebuilding items; nothing changed")
+
+
 WORKTREE_COLUMNS = ("worktree_path", "worktree_branch", "worktree_repo", "worktree_session", "worktree_at")
 
 
@@ -552,7 +575,8 @@ def add_actor(tx, actor_id, kind, display):
 # MIGRATIONS[v] upgrades a store from schema v to v + 1 inside the write Transaction, so its rows
 # are journaled and feed.head is rewritten like any other write.
 MIGRATIONS = {1: _schema_1_to_2, 2: _schema_2_to_3, 3: _schema_3_to_4, 4: _schema_4_to_5, 5: _schema_5_to_6,
-              6: _schema_6_to_7, 7: _schema_7_to_8, 8: _schema_8_to_9, 9: _schema_9_to_10, 10: _schema_10_to_11}
+              6: _schema_6_to_7, 7: _schema_7_to_8, 8: _schema_8_to_9, 9: _schema_9_to_10, 10: _schema_10_to_11,
+              11: _schema_11_to_12}
 
 
 def default_dir():
@@ -841,7 +865,17 @@ def open_store(sweep=True):
 
 
 def _migrate(store):
-    """Run every step up to SCHEMA_VERSION in one transaction; the default actor writes its rows."""
+    """Run every step up to SCHEMA_VERSION in one transaction; the default actor writes its rows. Foreign keys are
+    off for the transaction (a pragma that only takes effect outside one): schema 12 rebuilds items, and checks
+    the references itself before committing."""
+    store.conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        _migrate_steps(store)
+    finally:
+        store.conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_steps(store):
     with store.transaction(actor=store.meta("default_actor")) as tx:
         version = int(store.meta("schema_version"))  # re-read under the lock
         if version < 9:

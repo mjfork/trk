@@ -23,7 +23,7 @@
           "root_title": {"type": "string"},
           "effective_owner": {"$ref": "item.schema.json#/$defs/nullable_id"},
           "status": {"$ref": "item.schema.json#/$defs/status"},
-          "stage": {"enum": ["framed", "specd", "built", "merged", "verified", null]},
+          "stage": {"enum": ["framed", "specd", "built", "merged", "reviewed", "verified", null]},
           "claim": {"anyOf": [{"$ref": "item.schema.json#/$defs/claim"}, {"type": "null"}], "description": "The live claim (session, actor, lease), or null."},
           "branch": {"type": ["string", "null"], "minLength": 1, "description": "The recorded branch."},
           "worktree": {"$ref": "item.schema.json#/$defs/worktree"},

@@ -11,8 +11,28 @@ from .errors import gate_unmet, refused, usage
 
 STAGES = ("framed", "specd", "built", "merged", "verified")
 
+# A findings item (UP-0018: a review, an audit, a sweep, a diagnosis) delivers findings, not code: no pr row, merge
+# or blast-radius. Its criteria pass on runs or on an independent reader's doc verdicts, then an independent judgment.
+FINDINGS_STAGES = ("framed", "specd", "reviewed", "verified")
+
+# Every stage in one order, for reading a stage name and for the cut-off of a backward move.
+ALL_STAGES = ("framed", "specd", "built", "merged", "reviewed", "verified")
+
 # The written sections each ticket form must have non-empty to be Framed.
-WRITTEN = {"spec_bound": ("what-to-build",), "self_contained": ("current-behaviour", "desired-behaviour")}
+WRITTEN = {"spec_bound": ("what-to-build",), "self_contained": ("current-behaviour", "desired-behaviour"),
+           "findings": ("question",)}
+
+# The ticket forms that change code: they have a pr row, a merge and a blast-radius rating.
+CODE_FORMS = ("spec_bound", "self_contained")
+
+
+def route(row):
+    """The stages a ticket of this form passes through, in order."""
+    return FINDINGS_STAGES if row["form"] == "findings" else STAGES
+
+
+def is_code(row):
+    return row["kind"] == "work_item" and row["form"] in CODE_FORMS
 
 
 def is_ticket(row):
@@ -29,7 +49,16 @@ def require_ticket(row, verb):
 
     if not is_ticket(row):
         what = items.FORM_OUT.get(row["form"]) or items.KIND_OUT[row["kind"]]
-        raise usage(f"{row['id']} is a {what}; {verb} tickets (spec-bound, self-contained) only")
+        raise usage(f"{row['id']} is a {what}; {verb} tickets (spec-bound, self-contained, findings) only")
+
+
+def require_code(row, verb):
+    """A usage error unless the item is a ticket that changes code (spec-bound or self-contained)."""
+    from . import items
+
+    if not is_code(row):
+        what = items.FORM_OUT.get(row["form"]) or items.KIND_OUT[row["kind"]]
+        raise usage(f"{row['id']} is a {what}; {verb} tickets that change code (spec-bound, self-contained) only")
 
 
 def _framed(conn, row):
@@ -120,12 +149,33 @@ def _red_reviews(conn, row, weighing):
     return missing
 
 
+def _reviewed(conn, row):
+    """A findings item: every live criterion's latest counting row of REVIEWED_KINDS for `reviewed` passes, and a
+    `judgment` for `reviewed` counts. check_findings_judge kept both independent when they were written."""
+    from . import evidence
+
+    weighing = evidence.weigh(conn, row)
+    missing = _criterion_passes(conn, row, weighing, "reviewed", evidence.REVIEWED_KINDS)
+    if weighing.latest(("judgment",), "reviewed") is None:
+        missing.append({"need": "judgment"})
+    return missing
+
+
+def _open_children(conn, row):
+    from . import items
+
+    children = [c["id"] for c in items.children(conn, row["id"], open_only=True) if c["form"] != "ask"]
+    return [{"need": "open-children", "children": children}] if children else []
+
+
 def _verified(conn, row):
     """Every live criterion's latest counting `verified` run passes, at a sha containing the merge sha
     (the head sha when Merged was skipped). With no merge sha to contain, `merge` is missing first; open
     children but asks are `open-children`, since reaching Verified closes it (open asks refuse that close: `open-asks`)."""
     from . import evidence, items
 
+    if row["form"] == "findings":  # reviewed already holds the proof: verified only closes it
+        return _open_children(conn, row)
     weighing = evidence.weigh(conn, row)
     placed = weighing.merge is not None or (row["merged_skipped"] and weighing.head is not None)
     missing = [] if placed else [{"need": "merge"}]
@@ -207,8 +257,8 @@ def _close(conn, row):
 
 
 # Gate name -> check(conn, row) -> missing list. Later gates plug in here.
-GATES = {"framed": _framed, "specd": _specd, "built": _built, "merged": _merged, "verified": _verified,
-         "accept": _accept, "close": _close}
+GATES = {"framed": _framed, "specd": _specd, "built": _built, "merged": _merged, "reviewed": _reviewed,
+         "verified": _verified, "accept": _accept, "close": _close}
 
 # Gates a ticket passes on its own whenever they hold from data alone, keyed by the stage they enter.
 AUTO = {"specd": lambda row: row["form"] == "spec_bound"}
@@ -219,8 +269,9 @@ def gate(conn, row, gate_name):
     return GATES[gate_name](conn, row)
 
 
-def _following(stage):
-    return STAGES[STAGES.index(stage) + 1] if stage != STAGES[-1] else None
+def _following(row, stage):
+    stages = route(row)
+    return stages[stages.index(stage) + 1] if stage != stages[-1] else None
 
 
 def next_gate(row):
@@ -229,7 +280,7 @@ def next_gate(row):
     if row["status"] == "closed" or row["form"] == "ask":
         return None
     if is_ticket(row):
-        following = _following(row["stage"])
+        following = _following(row, row["stage"])
         return following if following in GATES else None
     if row["kind"] == "project" and row["spec_state"] == "draft":
         return "accept"
@@ -277,6 +328,37 @@ def check_spec_judge(tx, row, gate):
                       "session that wrote none of it (a separate Claude session, not a subagent)", item=row["id"])
 
 
+def findings_writers(conn, row, criterion_n=None):
+    """The sessions that wrote a findings item's evidence at `reviewed` (a run, or a doc row without a verdict), for
+    one criterion when `criterion_n` is given."""
+    from . import evidence
+
+    found = set()
+    for r in conn.execute("SELECT kind, verdict, criterion_n, session FROM evidence WHERE item_id = ? AND gate = 'reviewed'"
+                          " AND session IS NOT NULL", (row["id"],)):
+        wrote = r["kind"] in evidence.RUNS or (r["kind"] == "doc" and r["verdict"] is None)
+        if wrote and (criterion_n is None or r["criterion_n"] == criterion_n):
+            found.add(r["session"])
+    return found
+
+
+def check_findings_judge(tx, row, criterion_n=None):
+    """A doc verdict (for one criterion) or a `reviewed` judgment on a findings item comes from a session that wrote
+    none of the evidence it judges (rule `not-independent`); an agent needs a session (rule `session-required`), a
+    person at a terminal may judge, as for a spec judgment."""
+    from . import actors
+
+    if not tx.session:
+        if actors.kind(tx.conn, tx.actor) == "agent":
+            raise refused("session-required", "a findings verdict or judgment by an agent needs a session (--session or"
+                          " $TRK_SESSION): independence from the evidence's writer is checked by session", item=row["id"])
+        return
+    if tx.session in findings_writers(tx.conn, row, criterion_n):
+        what = f"criterion ac-{criterion_n}'s evidence" if criterion_n is not None else "the evidence at reviewed"
+        raise refused("not-independent", f"session {tx.session} wrote {row['id']}'s {what}; its verdict needs a session"
+                      " that wrote none of it (a separate Claude session, not a subagent)", item=row["id"])
+
+
 def advance(tx, raw_id, judgment=None, outcome=None):
     """`advance`: move a ticket exactly one stage forward when that stage's gate holds (rule `gate-unmet`
     with the missing list otherwise, nothing written). `judgment` first writes the `judgment` row that
@@ -290,7 +372,7 @@ def advance(tx, raw_id, judgment=None, outcome=None):
     require_ticket(row, "advance moves")
     if row["status"] == "closed":
         raise refused("closed", f"{item_id} is closed", item=item_id)
-    target = _following(row["stage"])
+    target = _following(row, row["stage"])
     if target is None:
         raise usage(f"{item_id} is at {row['stage']}, the last stage")
     if row["stage"] != "framed":  # framed to specd is a judgment, which the claimant need not hold
@@ -301,8 +383,8 @@ def advance(tx, raw_id, judgment=None, outcome=None):
     elif outcome is not None:
         raise usage(f"--outcome goes with advancing into verified only; {item_id} is advancing into {target}")
     if judgment is not None:
-        if row["form"] != "self_contained" or row["stage"] != "framed":
-            raise usage("--judgment judges a self-contained ticket at framed complete; "
+        if row["form"] not in ("self_contained", "findings") or row["stage"] != "framed":
+            raise usage("--judgment judges a self-contained or findings ticket at framed complete; "
                         f"{item_id} is a {items.FORM_OUT[row['form']]} ticket at {row['stage']}")
         check_spec_judge(tx, row, "specd")
         evidence.record(tx, row, "judgment", "specd", verdict="pass", note=evidence.check_note(judgment, "--judgment"))
@@ -316,10 +398,11 @@ def advance(tx, raw_id, judgment=None, outcome=None):
     return item_id
 
 
-def _check_stage(raw):
-    """A stage name as given (usage error naming the stages otherwise)."""
-    if raw not in STAGES:
-        raise usage(f"the stage is one of {', '.join(STAGES)}, got {raw!r}")
+def _check_stage(raw, row=None):
+    """A stage name as given (usage error naming the stages otherwise); of the ticket's own route with `row`."""
+    stages = route(row) if row is not None else ALL_STAGES
+    if raw not in stages:
+        raise usage(f"the stage is one of {', '.join(stages)}, got {raw!r}")
     return raw
 
 
@@ -381,9 +464,9 @@ def reopen_stage(tx, raw_id, stage, reason):
     """`reopen-stage`: move an open ticket back to an earlier stage (rule `not-backward` for the current
     or a later one), with the counting cut-off for every gate above it (evidence.weigh reads the move)."""
     reason = check_reason(reason, "reopen-stage")
-    stage = _check_stage(stage)
     row = _open_ticket(tx, raw_id, "reopen-stage moves")
-    if STAGES.index(stage) >= STAGES.index(row["stage"]):
+    stage = _check_stage(stage, row)
+    if route(row).index(stage) >= route(row).index(row["stage"]):
         raise refused("not-backward", f"{row['id']} is at {row['stage']}; reopen-stage moves it to an earlier stage,"
                       f" not {stage}", item=row["id"])
     move_back(tx, row, stage, "reopen-stage", reason)
@@ -393,12 +476,13 @@ def reopen_stage(tx, raw_id, stage, reason):
 def move_back(tx, row, stage, via, reason):
     """Set a ticket back at an earlier `stage`, clearing `merged_skipped` at Built or earlier, and journal
     one `stage.changed` row per stage crossed."""
-    skipped = row["merged_skipped"] and STAGES.index(stage) >= STAGES.index("merged")
+    stages = route(row)
+    skipped = row["merged_skipped"] and "merged" in stages and stages.index(stage) >= stages.index("merged")
     tx.conn.execute("UPDATE items SET stage = ?, merged_skipped = ?, updated_at = ? WHERE id = ?",
                     (stage, int(bool(skipped)), clock.stamp(tx.now), row["id"]))
-    crossed = list(reversed(STAGES[STAGES.index(stage):STAGES.index(row["stage"])]))
+    crossed = list(reversed(stages[stages.index(stage):stages.index(row["stage"])]))
     journal_moves(tx, row["id"], row["stage"], crossed, via, reason)
-    if STAGES.index(stage) <= STAGES.index("specd"):  # a claim held now counts as a builder's: refresh the byline
+    if stages.index(stage) <= stages.index("specd"):  # a claim held now counts as a builder's: refresh the byline
         from . import items
 
         items.refresh_builder_asks(tx, row["id"])
@@ -464,7 +548,7 @@ def _auto_path(conn, row, start):
     """The stages a ticket at `start` reaches by auto-advance alone, in order."""
     path, stage = [], start
     while True:
-        following = _following(stage)
+        following = _following(row, stage)
         if following not in AUTO or not AUTO[following](row) or gate(conn, row, following):
             return path
         path.append(following)

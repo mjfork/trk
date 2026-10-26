@@ -77,9 +77,19 @@ Copy-paste command patterns for every step are in
 | **project** | spec: `problem`, `solution`, `user-stories`, `implementation-decisions`, `testing-decisions`, `out-of-scope`; `acceptance-criteria` generated | draft | spec accepted, children closed, every criterion has a passing `close` row |
 | **spec-bound ticket** | `what-to-build` + criteria | `framed`, or `specd` under an accepted spec | it reaches Verified via `advance --outcome` |
 | **self-contained ticket** | `current-behaviour`, `desired-behaviour` + criteria | `framed`; `specd` after `advance --judgment` | same as above |
+| **findings ticket** | `question` + criteria; `findings` (optional) | `framed`; `specd` after `advance --judgment` | it reaches Verified via `advance --outcome` from `reviewed`, with no pr row, merge or blast-radius |
 | **decision** | `question`; `resolution` before closing | open, claimable | `resolution` written, then `close --resolution done` |
 | **ask** | `question`; `answer` | open; blocks its parent | answered (`trk answer` or a page comment) or withdrawn |
 
+- Work whose deliverable is findings, not code (a review, an audit, a sweep, a diagnosis) is a **findings
+  ticket** (`--form findings`). Its route is framed → specd → reviewed → verified. To reach `reviewed`, each live
+  criterion needs a passing `test-run`, `webtester-run` or `human-accept` at gate `reviewed`, or a `doc` row with
+  `--verdict pass` there from a reader: `trk evidence add <id> --kind doc --gate reviewed --criterion ac-<n> --ref
+  <findings file> --verdict pass --note …`. It also needs a `judgment` at gate `reviewed`. The verdicts and the
+  judgment come from a session that wrote none of that evidence (rule `not-independent`; an agent needs a session,
+  `session-required`). The builder writes its findings as `doc` rows without a verdict, then advances.
+- An item an answered ask made unnecessary closes `trk close <id> --resolution moot --by-ask <ask> --outcome …`,
+  citing that ask (refused `ask-not-answered` until it is closed answered). Use it in place of `wont-do` there.
 - Blocking is an **edge** (`trk link A blocks B` = B waits on A), never text.
   No labels, no priorities: the only priority is `--urgent`.
 - Generated sections (`destination`, `acceptance-criteria`) are refused by
@@ -95,6 +105,9 @@ Copy-paste command patterns for every step are in
    `open_asks`.
 2. Take work with `trk claim --next --root <program> --json` (race-free) or
    `trk claim <id> --json`. Exit 4 means another session holds it: pick another.
+   To write the spec of a ticket that is blocked (by a `blocks` edge or an open ask), claim it
+   `--scope spec`: that is granted past those, makes you no builder, and refuses builder writes
+   (`spec-scope`) until you claim again with `--scope build` once it is ready.
    Working in a worktree? Record it with the claim: `trk claim <id> --worktree
    <path>` (or `trk worktree set <id> --path <path>`). `trk where <path> --json`
    then names the owning item, its claim and branch. Run `trk worktree clear <id>`

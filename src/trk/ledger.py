@@ -121,7 +121,7 @@ def _audited_by(conn, item_id, session):
 
 def _claimed_by(conn, item_id, session):
     """Whether `session` ever claimed the ticket, at any stage, live or ended."""
-    return session is not None and conn.execute("SELECT 1 FROM claims WHERE item_id = ? AND session = ?",
+    return session is not None and conn.execute("SELECT 1 FROM claims WHERE item_id = ? AND session = ? AND scope = 'build'",
                                                 (item_id, session)).fetchone() is not None
 
 
@@ -238,6 +238,9 @@ def _pre_built_claims(conn, item_id):
             if stage in PRE_BUILT:
                 found |= {(s, claimant) for s, (claimant, _) in held.items()}
         elif change in ("claim.taken", "claim.renewed"):
+            if data.get("scope") == "spec":  # a spec-scope claim makes no builder (UP-0011)
+                held.pop(session, None)
+                continue
             held[session] = (data["claim_actor"], data["lease_until"])
             if stage in PRE_BUILT:
                 found.add((session, data["claim_actor"]))

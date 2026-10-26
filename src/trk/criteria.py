@@ -17,6 +17,7 @@ GENERATED = {
     ("project", None): "acceptance-criteria",
     ("work_item", "spec_bound"): "acceptance-criteria",
     ("work_item", "self_contained"): "acceptance-criteria",
+    ("work_item", "findings"): "acceptance-criteria",
 }
 
 _HANDLE = re.compile(r"ac-([1-9][0-9]*)", re.IGNORECASE)

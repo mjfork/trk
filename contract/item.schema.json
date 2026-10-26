@@ -25,7 +25,7 @@
     "client": {"anyOf": [{"$ref": "#/$defs/client"}, {"type": "null"}], "description": "The item's own client name; null when it inherits. Added by tr-fz0az, so not required: a reply from an older build has neither client field."},
     "effective_client": {"anyOf": [{"$ref": "#/$defs/client"}, {"type": "null"}], "description": "Its own client, else the nearest ancestor's."},
     "status": {"$ref": "#/$defs/status"},
-    "resolution": {"enum": ["done", "wont-do", "superseded", "out-of-scope", "duplicate", null], "description": "Set exactly when closed."},
+    "resolution": {"enum": ["done", "wont-do", "superseded", "out-of-scope", "duplicate", "moot", null], "description": "Set exactly when closed."},
     "outcome": {"type": ["string", "null"], "description": "The one-line outcome given at close; null while open."},
     "spec_state": {"enum": ["draft", "accepted", null], "description": "Set exactly on projects."},
     "jira_url": {"type": ["string", "null"]},
@@ -33,7 +33,7 @@
     "worktree": {"anyOf": [{"$ref": "#/$defs/worktree"}, {"type": "null"}], "description": "The item's recorded worktree (`trk worktree set`, `trk claim --worktree`), or null when it records none. Added by tr-zwb4a, so not required: a reply from an older build has none of worktree, archive and effective_archive."},
     "archive": {"type": ["string", "null"], "minLength": 1, "description": "The item's own archive location: a path template, as written, in which `<tree>` stands for the worktree's directory name; null when it inherits. trk never expands `~` nor fills `<tree>`."},
     "effective_archive": {"type": ["string", "null"], "minLength": 1, "description": "Its own archive location, else the nearest ancestor's; null when nothing sets one. The documented default for null is ~/work/archive/<tree>-tmp.tgz; trk reports null and does not invent it."},
-    "stage": {"enum": ["framed", "specd", "built", "merged", "verified", null], "description": "Set on spec-bound and self-contained tickets (null on a ticket closed before Stage gates); null on every other item."},
+    "stage": {"enum": ["framed", "specd", "built", "merged", "reviewed", "verified", null], "description": "Set on spec-bound, self-contained and findings tickets (a findings ticket's route is framed, specd, reviewed, verified) (null on a ticket closed before Stage gates); null on every other item."},
     "merged_skipped": {"type": "boolean", "description": "True on a ticket whose Merged gate was met by a skip row; false otherwise."},
     "lane": {"enum": ["red", "yellow", "green", null], "description": "A ticket's blast-radius lane from its latest counting blast-radius row; null until there is one, and on every other item."},
     "gate": {
@@ -41,7 +41,7 @@
       "required": ["next", "missing"],
       "description": "The gate the item faces next and what it still lacks, from the same check advance, spec accept and close refuse on.",
       "properties": {
-        "next": {"enum": ["specd", "built", "merged", "verified", "accept", "close", null], "description": "A ticket's next stage, accept for a draft project, close for an accepted project, a program or a decision; null on closed items and asks."},
+        "next": {"enum": ["specd", "built", "merged", "reviewed", "verified", "accept", "close", null], "description": "A ticket's next stage, accept for a draft project, close for an accepted project, a program or a decision; null on closed items and asks."},
         "missing": {
           "type": "array",
           "description": "Empty when the gate holds. Each entry names a need and its details; the need values are open.",
@@ -258,12 +258,12 @@
     },
     {
       "description": "Only tickets have ledger rows.",
-      "if": {"properties": {"form": {"enum": ["spec-bound", "self-contained"]}}, "required": ["form"]},
+      "if": {"properties": {"form": {"enum": ["spec-bound", "self-contained", "findings"]}}, "required": ["form"]},
       "else": {"properties": {"ledger_rows": {"maxItems": 0}}}
     },
     {
       "description": "Only tickets have a stage.",
-      "if": {"properties": {"form": {"enum": ["spec-bound", "self-contained"]}}, "required": ["form"]},
+      "if": {"properties": {"form": {"enum": ["spec-bound", "self-contained", "findings"]}}, "required": ["form"]},
       "else": {"properties": {"stage": {"type": "null"}}}
     },
     {
@@ -297,7 +297,7 @@
     "nullable_id": {"type": ["string", "null"], "minLength": 1},
     "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
     "kind": {"enum": ["program", "project", "work-item"]},
-    "form": {"enum": ["spec-bound", "self-contained", "decision", "ask"]},
+    "form": {"enum": ["spec-bound", "self-contained", "findings", "decision", "ask"]},
     "status": {"enum": ["open", "closed"]},
     "role": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
     "client": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "A client name: lowercase letters, digits and `-`, as an actor name. trk stores it; what a client means is the consumer's."},
@@ -320,7 +320,8 @@
         "session": {"$ref": "#/$defs/id"},
         "actor": {"$ref": "#/$defs/id"},
         "lease_until": {"$ref": "#/$defs/timestamp"},
-        "taken_at": {"$ref": "#/$defs/timestamp"}
+        "taken_at": {"$ref": "#/$defs/timestamp"},
+        "scope": {"enum": ["spec", "build"], "description": "Optional (older output has none, meaning build): a spec-scope claim is for writing the item's spec; builder writes are refused under it (rule spec-scope)."}
       }
     },
     "page": {

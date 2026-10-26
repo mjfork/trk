@@ -19,6 +19,7 @@ EXPECTED = {
                         "acceptance-criteria", "out-of-scope"),
     ("work_item", "spec_bound"): ("what-to-build", "acceptance-criteria"),
     ("work_item", "self_contained"): ("current-behaviour", "desired-behaviour", "acceptance-criteria"),
+    ("work_item", "findings"): ("question", "findings", "acceptance-criteria"),
     ("work_item", "decision"): ("question", "resolution"),
     ("work_item", "ask"): ("question", "answer"),
 }

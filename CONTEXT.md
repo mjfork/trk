@@ -27,7 +27,7 @@ An item small enough to be completed within a single ticket; may contain work it
 _Avoid_: Task, issue, subtask
 
 **Form**:
-The shape of a work item, which decides how it behaves: spec-bound ticket, self-contained ticket, decision or ask.
+The shape of a work item, which decides how it behaves: spec-bound ticket, self-contained ticket, findings ticket, decision or ask. A findings ticket delivers findings, not code: its route is Framed, Spec'd, Reviewed, Verified, and it never has a pr row, merge or blast-radius.
 _Avoid_: Type, subtype, issue type
 
 **Section**:
@@ -113,11 +113,11 @@ Whether an item is open or closed; the same two values for every kind. Blocked a
 _Avoid_: State, workflow state
 
 **Resolution**:
-Why a closed item closed: done, won't do, superseded, out of scope or duplicate.
+Why a closed item closed: done, won't do, superseded, out of scope, duplicate or moot (an answered ask made it unnecessary; the close cites that ask).
 _Avoid_: Close reason, outcome
 
 **Stage**:
-How far a ticket has advanced toward done: Framed, Spec'd, Built, Merged, Verified; it moves forward only when the next stage's gate holds (Merged alone may be skipped, by a ticket that changes no repo), and back only by `reopen-stage` or reopening a ticket closed at Verified, after which the gates above the stage it went back to count only evidence recorded since. Tickets only.
+How far a ticket has advanced toward done: Framed, Spec'd, Built, Merged, Verified (a findings ticket: Framed, Spec'd, Reviewed, Verified); it moves forward only when the next stage's gate holds (Merged alone may be skipped, by a ticket that changes no repo), and back only by `reopen-stage` or reopening a ticket closed at Verified, after which the gates above the stage it went back to count only evidence recorded since. Tickets only.
 _Avoid_: Phase, status
 
 **Gate**:

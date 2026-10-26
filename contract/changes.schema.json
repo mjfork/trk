@@ -18,7 +18,7 @@
     "nullable_id": {"type": ["string", "null"], "minLength": 1},
     "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
     "status": {"enum": ["open", "closed"]},
-    "resolution": {"enum": ["done", "wont-do", "superseded", "out-of-scope", "duplicate"]},
+    "resolution": {"enum": ["done", "wont-do", "superseded", "out-of-scope", "duplicate", "moot"]},
     "spec_state": {"enum": ["draft", "accepted"]},
     "actor_kind": {"enum": ["human", "agent"]},
     "role": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "A function role, or parent (relative)."},
@@ -53,9 +53,9 @@
         "parent_claim_live": {"type": "boolean", "description": "Whether that claim is live as the row commits."}
       }
     },
-    "stage": {"enum": ["framed", "specd", "built", "merged", "verified"]},
+    "stage": {"enum": ["framed", "specd", "built", "merged", "reviewed", "verified"]},
     "criterion_handle": {"type": "string", "pattern": "^ac-[1-9][0-9]*$"},
-    "gate": {"enum": ["framed", "specd", "built", "merged", "verified", "accept", "close"]},
+    "gate": {"enum": ["framed", "specd", "built", "merged", "reviewed", "verified", "accept", "close"]},
     "evidence_id": {"type": "string", "pattern": "^[0-9a-hjkmnp-tv-z]{6}$", "description": "6 chars of Core's lowercase Crockford alphabet."},
     "ledger_handle": {"type": "string", "pattern": "^ledger-[1-9][0-9]*$"},
     "sha": {"type": "string", "pattern": "^[0-9a-f]{7,40}$", "description": "Lowercase, as stored."},
@@ -63,7 +63,7 @@
       "description": "The keys every ledger.* row carries: the row's handle, number and kind. Ledger rows belong to tickets only.",
       "properties": {
         "item": {"$ref": "#/$defs/id"},
-        "form": {"enum": ["spec-bound", "self-contained"]},
+        "form": {"enum": ["spec-bound", "self-contained", "findings"]},
         "data": {
           "required": ["ledger", "n", "kind"],
           "properties": {
@@ -76,7 +76,7 @@
     },
     "criterion_item": {
       "description": "Criteria belong to tickets, projects and programs (destination statements), never to decisions or asks.",
-      "properties": {"item": {"$ref": "#/$defs/id"}, "form": {"enum": ["spec-bound", "self-contained", null]}}
+      "properties": {"item": {"$ref": "#/$defs/id"}, "form": {"enum": ["spec-bound", "self-contained", "findings", null]}}
     },
     "position": {
       "description": "Where an item sits: its parent (null when top-level), root, depth and rank.",
@@ -99,7 +99,7 @@
         "change": {"type": "string", "pattern": "^[a-z]+(\\.[a-z_-]+)+$"},
         "item": {"$ref": "#/$defs/nullable_id"},
         "kind": {"enum": ["program", "project", "work-item", null]},
-        "form": {"enum": ["spec-bound", "self-contained", "decision", "ask", null]},
+        "form": {"enum": ["spec-bound", "self-contained", "findings", "decision", "ask", null]},
         "title": {"type": ["string", "null"]},
         "parent": {"$ref": "#/$defs/nullable_id"},
         "root": {"$ref": "#/$defs/nullable_id"},
@@ -360,11 +360,13 @@
                   "resolution": {"$ref": "#/$defs/resolution"},
                   "outcome": {"$ref": "#/$defs/outcome"},
                   "by": {"$ref": "#/$defs/id", "description": "The replacement, when superseded."},
-                  "of": {"$ref": "#/$defs/id", "description": "The original, when duplicate."}
+                  "of": {"$ref": "#/$defs/id", "description": "The original, when duplicate."},
+                  "by_ask": {"$ref": "#/$defs/id", "description": "The answered ask that made the item unnecessary, when moot."}
                 },
                 "allOf": [
                   {"if": {"properties": {"resolution": {"const": "superseded"}}, "required": ["resolution"]}, "then": {"required": ["by"]}},
-                  {"if": {"properties": {"resolution": {"const": "duplicate"}}, "required": ["resolution"]}, "then": {"required": ["of"]}}
+                  {"if": {"properties": {"resolution": {"const": "duplicate"}}, "required": ["resolution"]}, "then": {"required": ["of"]}},
+                  {"if": {"properties": {"resolution": {"const": "moot"}}, "required": ["resolution"]}, "then": {"required": ["by_ask"]}}
                 ]
               }
             }
@@ -428,6 +430,7 @@
                   "claim_actor": {"$ref": "#/$defs/id"},
                   "lease_until": {"$ref": "#/$defs/timestamp"},
                   "forced": {"type": "boolean", "description": "On claim.taken: true when claim --force overrode the program rule."},
+                  "scope": {"enum": ["spec", "build"], "description": "The claim's scope (optional: rows before schema 12 have none, meaning build). A spec-scope claim makes no builder."},
                   "reason": {"type": "string", "minLength": 1, "description": "On claim.released, why the claim ended when the spec names one (closed: the item closed); absent on an explicit release. New reasons may appear."}
                 }
               }
@@ -598,7 +601,7 @@
             "properties": {
               "item": {"$ref": "#/$defs/id"},
               "kind": {"const": "work-item"},
-              "form": {"enum": ["spec-bound", "self-contained"]},
+              "form": {"enum": ["spec-bound", "self-contained", "findings"]},
               "data": {
                 "required": ["old", "new", "via"],
                 "properties": {
@@ -652,7 +655,7 @@
             "description": "One row per evidence row, a retraction included (kind retract, ref the id it withdraws). Asks take no evidence.",
             "properties": {
               "item": {"$ref": "#/$defs/id"},
-              "form": {"enum": ["spec-bound", "self-contained", "decision", null]},
+              "form": {"enum": ["spec-bound", "self-contained", "findings", "decision", null]},
               "data": {
                 "required": ["id", "gate", "kind", "criterion", "criterion_version", "sha", "verdict", "ref", "note"],
                 "properties": {

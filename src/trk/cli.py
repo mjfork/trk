@@ -157,6 +157,7 @@ def build_parser():
     close.add_argument("--outcome", required=True, metavar="TEXT", help="the result in one line")
     close.add_argument("--by", metavar="ID", help="superseded: the replacement")
     close.add_argument("--of", metavar="ID", help="duplicate: the original")
+    close.add_argument("--by-ask", metavar="ASK", help="moot: the answered ask that made the item unnecessary")
     close.set_defaults(handler=cmd_close)
 
     for name, handler, help_text in (("link", cmd_link, "add an edge"), ("unlink", cmd_unlink, "remove an edge")):
@@ -200,6 +201,9 @@ def build_parser():
     claim.add_argument("--root", metavar="ID", help="--next: only this subtree")
     claim.add_argument("--owner", metavar="ACTOR", help="--next: only items this actor effectively owns")
     claim.add_argument("--force", action="store_true", help="claim a program (a root's orchestrator holding it)")
+    claim.add_argument("--scope", choices=("spec", "build"), default="build",
+                       help="spec: to write the item's spec, granted past blocks edges and open asks; builder writes "
+                            "are refused (spec-scope) until claiming again with --scope build (default build)")
     claim.add_argument("--worktree", metavar="PATH", help="also record PATH as the item's worktree (trk worktree set)")
     _lease(claim, "lease length (default: the store's lease_minutes)")
     claim.set_defaults(handler=cmd_claim)
@@ -833,7 +837,8 @@ def cmd_move(args):
 
 
 def cmd_close(args):
-    _write_item(args, lambda tx: items.close(tx, args.id, args.resolution, args.outcome, by=args.by, of=args.of))
+    _write_item(args, lambda tx: items.close(tx, args.id, args.resolution, args.outcome, by=args.by, of=args.of,
+                                                         by_ask=args.by_ask))
 
 
 def cmd_reopen(args):
@@ -924,6 +929,8 @@ def cmd_claim(args):
         raise usage("claim takes an item id or --next, not both" if args.next else "claim takes an item id or --next")
     if not args.next and (args.root or args.owner):
         raise usage("--root and --owner go with --next")
+    if args.next and args.scope == "spec":
+        raise usage("--scope spec goes with an item id, not --next")
     if args.next and args.force:
         raise usage("--force goes with an item id, not --next")
     session = _claim_session(args)
@@ -934,7 +941,7 @@ def cmd_claim(args):
             if args.next:
                 item_id = claims.take_next(tx, session, args.root, args.owner, args.lease)
             else:
-                item_id = claims.take(tx, args.id, session, args.lease, args.force)
+                item_id = claims.take(tx, args.id, session, args.lease, args.force, args.scope)
             if args.worktree is not None and item_id is not None:
                 worktrees.record(tx, item_id, args.worktree)
         item = items.to_json(st.conn, items.get(st.conn, item_id)) if item_id is not None and args.json else None
@@ -1871,9 +1878,10 @@ def _human_item(item, section_bodies=True, held=None):
     if item["spec_state"]:
         lines.append(f"  spec: {item['spec_state']}")
     if item["stage"]:
-        from .stages import STAGES
+        from .stages import FINDINGS_STAGES, STAGES
 
-        pipeline = " → ".join(f"[{stage}]" if stage == item["stage"] else stage for stage in STAGES)
+        route = FINDINGS_STAGES if item["form"] == "findings" else STAGES
+        pipeline = " → ".join(f"[{stage}]" if stage == item["stage"] else stage for stage in route)
         lane = f"  lane: {item['lane']}" if item["lane"] else ""
         lines.append(f"  stage: {item['stage']}  ({pipeline}){lane}")
     if item["gate"]["next"]:

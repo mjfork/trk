@@ -76,11 +76,11 @@ def test_claim_takes_a_lease_of_the_default_length(store, trk_home):
     assert result.code == 0, result.err
     assert result.json()["claimed"]["id"] == d
     assert result.json()["claimed"]["claim"] == {
-        "session": "s-1", "actor": "michael", "lease_until": "2026-10-10T13:00:00.000Z", "taken_at": T0,
+        "session": "s-1", "actor": "michael", "lease_until": "2026-10-10T13:00:00.000Z", "taken_at": T0, "scope": "build",
     }
     [taken] = rows(trk_home, "claim.taken")
     assert taken["item"] == d and taken["session"] == "s-1" and taken["actor"] == "michael"
-    assert taken["data"] == {"claim_actor": "michael", "lease_until": "2026-10-10T13:00:00.000Z", "forced": False}
+    assert taken["data"] == {"claim_actor": "michael", "lease_until": "2026-10-10T13:00:00.000Z", "scope": "build", "forced": False}
 
 
 def test_claim_prints_the_id_without_json(store):
@@ -147,7 +147,7 @@ def test_the_same_session_claiming_again_renews(store, trk_home, monkeypatch):
     assert result.json()["claimed"]["claim"]["lease_until"] == "2026-10-10T12:40:00.000Z"
     assert result.json()["claimed"]["claim"]["taken_at"] == T0
     [renewed] = rows(trk_home, "claim.renewed")
-    assert renewed["data"] == {"claim_actor": "michael", "lease_until": "2026-10-10T12:40:00.000Z"}
+    assert renewed["data"] == {"claim_actor": "michael", "lease_until": "2026-10-10T12:40:00.000Z", "scope": "build"}
     assert len(live_claims(store)) == 1
 
 
@@ -288,7 +288,7 @@ def test_renew_writes_only_claims_past_half_their_lease(store, trk_home, monkeyp
     assert result.code == 0
     [renewed] = rows(trk_home, "claim.renewed")
     assert renewed["item"] == d and renewed["session"] == "s-1"
-    assert renewed["data"] == {"claim_actor": "michael", "lease_until": "2026-10-10T13:31:00.000Z"}
+    assert renewed["data"] == {"claim_actor": "michael", "lease_until": "2026-10-10T13:31:00.000Z", "scope": "build"}
     leases = {c["item"]: c["lease_until"] for c in live_claims(store)}
     assert leases == {d: "2026-10-10T13:31:00.000Z", e: "2026-10-10T14:00:00.000Z"}
 
@@ -377,7 +377,7 @@ def test_herdr_renews_an_idle_sessions_claims_on_its_behalf(store, trk_home, mon
     assert {r["item"] for r in renewed} == {d, e}
     for r in renewed:
         assert (r["actor"], r["session"]) == ("herdr", "s-1")
-        assert r["data"] == {"claim_actor": "worker", "lease_until": "2026-10-10T13:31:00.000Z"}
+        assert r["data"] == {"claim_actor": "worker", "lease_until": "2026-10-10T13:31:00.000Z", "scope": "build"}
     leases = {c["item"]: (c["session"], c["actor"], c["lease_until"]) for c in live_claims(store)}
     assert leases == {
         d: ("s-1", "worker", "2026-10-10T13:31:00.000Z"),
@@ -406,7 +406,7 @@ def test_release_all_of_a_sessions_claims_as_another_actor(store, trk_home):
     released = rows(trk_home, "claim.released")
     assert [r["item"] for r in released] == [d, e]
     assert all(r["actor"] == "herdr" and r["session"] == "s-1" for r in released)
-    assert released[0]["data"] == {"claim_actor": "michael", "lease_until": "2026-10-10T13:00:00.000Z"}
+    assert released[0]["data"] == {"claim_actor": "michael", "lease_until": "2026-10-10T13:00:00.000Z", "scope": "build"}
     assert [c["item"] for c in live_claims(store)] == [f]
     assert show(store, d)["ready"] is True
 
@@ -444,7 +444,7 @@ def test_ac5_a_lapsed_lease_is_swept_by_any_command(store, trk_home, monkeypatch
     [expired] = [r for r in feed if r["change"] == "claim.expired"]
     assert expired["at"] == "2026-10-10T13:00:00.000Z"
     assert (expired["item"], expired["session"], expired["actor"]) == (d, "s-1", "michael")
-    assert expired["data"] == {"claim_actor": "michael", "lease_until": "2026-10-10T13:00:00.000Z"}
+    assert expired["data"] == {"claim_actor": "michael", "lease_until": "2026-10-10T13:00:00.000Z", "scope": "build"}
     assert claim(store, d, "--session", "s-2").code == 0
 
 
@@ -508,8 +508,10 @@ def test_claims_lists_live_claims_filtered(store, monkeypatch):
     store("claim", "release", "--session", "s-1", f)
     result = store("claims", "--json")
     assert result.json() == {"schema": 1, "claims": [
-        {"session": "s-1", "actor": "michael", "item": d, "lease_until": "2026-10-10T13:00:00.000Z", "taken_at": T0},
-        {"session": "s-2", "actor": "michael", "item": e, "lease_until": "2026-10-10T13:00:00.000Z", "taken_at": T0},
+        {"session": "s-1", "actor": "michael", "item": d, "lease_until": "2026-10-10T13:00:00.000Z", "taken_at": T0,
+         "scope": "build"},
+        {"session": "s-2", "actor": "michael", "item": e, "lease_until": "2026-10-10T13:00:00.000Z", "taken_at": T0,
+         "scope": "build"},
     ]}
     assert [c["item"] for c in live_claims(store, "--session", "s-2")] == [e]
     assert [c["item"] for c in live_claims(store, "--item", d.upper())] == [d]
@@ -532,7 +534,7 @@ def test_closing_an_item_releases_its_claim(store, trk_home):
     assert store("close", d, "--resolution", "done", "--outcome", "Done.").code == 0
     [released] = rows(trk_home, "claim.released")
     assert (released["item"], released["session"], released["actor"]) == (d, "s-1", "michael")
-    assert released["data"] == {"claim_actor": "builder", "lease_until": "2026-10-10T13:00:00.000Z", "reason": "closed"}
+    assert released["data"] == {"claim_actor": "builder", "lease_until": "2026-10-10T13:00:00.000Z", "scope": "build", "reason": "closed"}
     assert live_claims(store) == []
 
 

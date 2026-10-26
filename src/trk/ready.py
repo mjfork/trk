@@ -83,10 +83,10 @@ def frontier(conn, root=None, owner=None, limit=None, stage=None, client=None):
         require_actor(conn, owner)
     walked = [row for row, _ in items.outline(conn, root) if status(conn, row)["ready"]]
     if stage is not None:
-        from .stages import STAGES  # the gates modules load only for the verbs that need them
+        from .stages import ALL_STAGES  # the gates modules load only for the verbs that need them
 
-        if stage not in STAGES:
-            raise usage(f"--stage is one of {', '.join(STAGES)}, got {stage!r}")
+        if stage not in ALL_STAGES:
+            raise usage(f"--stage is one of {', '.join(ALL_STAGES)}, got {stage!r}")
         walked = [row for row in walked if row["stage"] == stage]
     if owner is not None:
         walked = [row for row in walked if items.hierarchy(conn, row["id"])["effective_owner"] == owner]

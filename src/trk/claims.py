@@ -53,7 +53,7 @@ def is_live(claim, now):
 def to_json(row):
     """The claim object on an item: who holds it and until when."""
     return {"session": row["session"], "actor": row["actor"], "lease_until": row["lease_until"],
-            "taken_at": row["taken_at"]}
+            "taken_at": row["taken_at"], "scope": row["scope"]}
 
 
 def listing(conn, session=None, item_id=None):
@@ -74,7 +74,8 @@ def _journal(tx, change, claim, *, data=None, at=None, actor=None):
     from . import items
 
     tx.journal(change, items.feed_fields(tx.conn, claim["item_id"]), session=claim["session"], at=at, actor=actor,
-               data={"claim_actor": claim["actor"], "lease_until": claim["lease_until"], **(data or {})})
+               data={"claim_actor": claim["actor"], "lease_until": claim["lease_until"], "scope": claim["scope"],
+                     **(data or {})})
 
 
 def _lapsed(conn, now):
@@ -102,19 +103,31 @@ def sweep(store, actor=None):
         return expire(tx, actor)
 
 
-def take(tx, raw_id, session, lease=None, force=False):
+SCOPES = ("spec", "build")
+
+# What a spec-scope claim may claim past (UP-0011): a blocked ticket's spec can be written while its build waits.
+SPEC_PAST = ("blocked-by:", "open-ask:")
+
+
+def take(tx, raw_id, session, lease=None, force=False, scope="build"):
     """Claim an item for `session` on behalf of tx.actor; the same session claiming again renews.
 
     Refused, in this order: closed items and asks (rule `unclaimable`), another session's live claim
     (rule `claimed`, exit 4), programs unless `force` (`unclaimable`), and any other not-ready item (rule `not-ready`, naming its
     why_not rules), `force` or not. `force` exists only for a root's orchestrator holding its program, which `claim.taken`
     records as `data.forced`. Never touches the owner.
+
+    `scope` (UP-0011): a `spec` claim is for writing the item's spec. It is granted past blocks edges and open asks,
+    never counts its session as a builder, and refuses builder writes (rule `spec-scope`). The same session claiming
+    again with scope `build` upgrades it, once the item is ready; a `spec` claim never downgrades a `build` one.
     """
     from . import items
 
+    if scope not in SCOPES:
+        raise usage(f"--scope is spec or build, got {scope!r}")
     expire(tx)
     row = items.get(tx.conn, raw_id)
-    return _take(tx, row, session, lease, force)
+    return _take(tx, row, session, lease, force, scope)
 
 
 def take_next(tx, session, root=None, owner=None, lease=None):
@@ -123,10 +136,10 @@ def take_next(tx, session, root=None, owner=None, lease=None):
 
     expire(tx)
     rows = ready.frontier(tx.conn, root, owner, limit=1)
-    return _take(tx, rows[0], session, lease, force=False) if rows else None
+    return _take(tx, rows[0], session, lease, force=False, scope="build") if rows else None
 
 
-def _refusal(tx, row, held, session, force):
+def _refusal(tx, row, held, session, force, scope="build"):
     """Raise the refusal a claim by `session` would meet (`take`'s checks, in its order); return whether the
     item is a program claimed by force. Returns when the claim would be granted."""
     from . import ready
@@ -139,14 +152,16 @@ def _refusal(tx, row, held, session, force):
     if held is not None and held["session"] != session:
         raise conflict("claimed", f"{item_id} is claimed by session {held['session']} ({held['actor']})"
                        f" until {held['lease_until']}", item=item_id)
-    if held is not None:
+    if held is not None and (scope == "spec" or held["scope"] == "build"):
         return False
     forced = row["kind"] == "program"
     if forced and not force:
         raise refused("unclaimable", f"{item_id} is a program; only --force claims one", item=item_id)
     # An ask on the ticket keeps it off the frontier, not out of its builder's hands: the RED-read ask is open
     # while the builder's lease lapses, and a fresh session must still claim and write (tr-zn1dk).
-    why_not = [rule for rule in ready.status(tx.conn, row)["why_not"] if not rule.startswith("open-ask:")]
+    past = SPEC_PAST if scope == "spec" else ("open-ask:",)
+    why_not = [rule for rule in ready.status(tx.conn, row)["why_not"]
+               if not rule.startswith(past) and not (rule == "claimed" and held is not None)]
     if why_not and not forced:
         raise refused("not-ready", f"{item_id} is not ready: {', '.join(why_not)}", item=item_id)
     return forced
@@ -162,29 +177,38 @@ def require_held(tx, row, doing):
     expire(tx)
     held = live(tx.conn, row["id"])
     if held is not None and held["session"] == tx.session:
+        if held["scope"] == "spec":
+            raise refused("spec-scope", f"{doing} is a builder's write; session {tx.session} holds a spec-scope claim"
+                          f" on {row['id']}: `trk claim {row['id']} --scope build` once it is ready", item=row["id"])
         return
     _refusal(tx, row, held, tx.session, force=False)
     raise refused("not-claimed", f"{doing} needs your claim on {row['id']}, and session {tx.session} holds none: "
                   f"`trk claim {row['id']}` first", item=row["id"])
 
 
-def _take(tx, row, session, lease, force):
+def _take(tx, row, session, lease, force, scope="build"):
     from . import items, ledger
 
     item_id = row["id"]
     held = live(tx.conn, item_id)
-    forced = _refusal(tx, row, held, session, force)
+    forced = _refusal(tx, row, held, session, force, scope)
     if held is not None:
-        _renew(tx, held, lease)
+        upgrade = held["scope"] == "spec" and scope == "build"
+        if upgrade:
+            tx.conn.execute("UPDATE claims SET scope = 'build' WHERE id = ?", (held["id"],))
+        _renew(tx, _by_id(tx.conn, held["id"]), lease)
+        if upgrade and row["stage"] in ledger.PRE_BUILT:
+            items.refresh_builder_asks(tx, item_id)
         return item_id
     minutes = lease or int(tx.store.meta("lease_minutes"))
     now = clock.stamp(tx.now)
     cursor = tx.conn.execute(
-        "INSERT INTO claims (item_id, session, actor, lease_minutes, taken_at, lease_until) VALUES (?, ?, ?, ?, ?, ?)",
-        (item_id, session, tx.actor, minutes, now, _until(tx.now, minutes)),
+        "INSERT INTO claims (item_id, session, actor, lease_minutes, taken_at, lease_until, scope)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (item_id, session, tx.actor, minutes, now, _until(tx.now, minutes), scope),
     )
     _journal(tx, "claim.taken", _by_id(tx.conn, cursor.lastrowid), data={"forced": forced})
-    if row["stage"] in ledger.PRE_BUILT:  # a claim before Built makes the claimant a builder
+    if row["stage"] in ledger.PRE_BUILT and scope == "build":  # a claim before Built makes the claimant a builder
         items.refresh_builder_asks(tx, item_id)
     return item_id
 

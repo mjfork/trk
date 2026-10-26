@@ -265,7 +265,7 @@ def record(tx, raw_id, sha=None, base=None, repo=None, notes=None):
     conn = tx.conn
     row = items.get(conn, raw_id)
     item_id = row["id"]
-    stages.require_ticket(row, "blast-radius rates")
+    stages.require_code(row, "blast-radius rates")
     if row["status"] == "closed":
         raise refused("closed", f"{item_id} is closed", item=item_id)
     claims.require_held(tx, row, "blast-radius")

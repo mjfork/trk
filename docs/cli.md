@@ -27,7 +27,7 @@ options:
 
 ```text
 usage: trk new [-h] [--as ACTOR] [--session SESSION] [--json]
-               [--form {spec-bound,self-contained,decision,ask}]
+               [--form {spec-bound,self-contained,findings,decision,ask}]
                [--subtype {research,prototype,grilling,task}] [--parent ID]
                [--first | --last | --before ID | --after ID] [--owner ACTOR]
                [--client NAME] [--urgent] [--jira URL] [--repo R]
@@ -43,7 +43,7 @@ options:
   --as ACTOR            writing actor
   --session SESSION     writing session id
   --json                print JSON
-  --form {spec-bound,self-contained,decision,ask}
+  --form {spec-bound,self-contained,findings,decision,ask}
                         work items: the form
   --subtype {research,prototype,grilling,task}
                         decisions: the subtype
@@ -290,8 +290,8 @@ options:
 
 ```text
 usage: trk close [-h] [--as ACTOR] [--session SESSION] [--json] --resolution
-                 {done,wont-do,superseded,out-of-scope,duplicate} --outcome
-                 TEXT|@FILE|- [--by ID] [--of ID]
+                 {done,wont-do,superseded,out-of-scope,duplicate,moot}
+                 --outcome TEXT|@FILE|- [--by ID] [--of ID] [--by-ask ASK]
                  id
 
 positional arguments:
@@ -302,11 +302,12 @@ options:
   --as ACTOR            writing actor
   --session SESSION     writing session id
   --json                print JSON
-  --resolution {done,wont-do,superseded,out-of-scope,duplicate}
+  --resolution {done,wont-do,superseded,out-of-scope,duplicate,moot}
   --outcome TEXT|@FILE|-
                         the result in one line
   --by ID               superseded: the replacement
   --of ID               duplicate: the original
+  --by-ask ASK          moot: the answered ask that made the item unnecessary
 ```
 
 ## trk link
@@ -438,26 +439,30 @@ options:
 
 ```text
 usage: trk claim [-h] [--as ACTOR] [--session SESSION] [--json] [--next]
-                 [--root ID] [--owner ACTOR] [--force] [--worktree PATH]
-                 [--lease DUR]
+                 [--root ID] [--owner ACTOR] [--force] [--scope {spec,build}]
+                 [--worktree PATH] [--lease DUR]
                  [id]
 
 positional arguments:
-  id                 the item to claim
+  id                    the item to claim
 
 options:
-  -h, --help         show this help message and exit
-  --as ACTOR         writing actor
-  --session SESSION  writing session id
-  --json             print JSON
-  --next             claim the first item `ready` returns
-  --root ID          --next: only this subtree
-  --owner ACTOR      --next: only items this actor effectively owns
-  --force            claim a program (a root's orchestrator holding it)
-  --worktree PATH    also record PATH as the item's worktree (trk worktree
-                     set)
-  --lease DUR        lease length (default: the store's lease_minutes): 45m,
-                     2h, 1h30m
+  -h, --help            show this help message and exit
+  --as ACTOR            writing actor
+  --session SESSION     writing session id
+  --json                print JSON
+  --next                claim the first item `ready` returns
+  --root ID             --next: only this subtree
+  --owner ACTOR         --next: only items this actor effectively owns
+  --force               claim a program (a root's orchestrator holding it)
+  --scope {spec,build}  spec: to write the item's spec, granted past blocks
+                        edges and open asks; builder writes are refused (spec-
+                        scope) until claiming again with --scope build
+                        (default build)
+  --worktree PATH       also record PATH as the item's worktree (trk worktree
+                        set)
+  --lease DUR           lease length (default: the store's lease_minutes):
+                        45m, 2h, 1h30m
 
 See also `trk claim renew` and `trk claim release`.
 ```

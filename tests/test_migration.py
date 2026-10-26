@@ -554,3 +554,41 @@ def test_a_schema_5_store_takes_the_routed_disposition_and_keeps_its_comment_row
     finally:
         conn.close()
     assert [tuple(r) for r in query(v5_store, "SELECT disposition FROM page_comments WHERE comment_id = 'c-2'")] == [("routed",)]
+
+
+# --- schema 12 (UP-0018): items is rebuilt to take form findings, stage reviewed and resolution moot ---
+
+def test_a_migrated_store_has_the_fresh_items_table_and_keeps_every_row(trk, v5_store, tmp_path, monkeypatch):
+    before = query(v5_store, "SELECT * FROM items ORDER BY id")
+    trk("changes", "--since", "0")
+    after = query(v5_store, "SELECT * FROM items ORDER BY id")
+    assert [dict(r) for r in after] == [{**dict(r), **{k: None for k in dict(a).keys() - dict(r).keys()}}
+                                        for r, a in zip(before, after)]
+    assert query(v5_store, "PRAGMA foreign_key_check") == []
+    fresh = tmp_path / "fresh"
+    monkeypatch.setenv("TRK_HOME", str(fresh))
+    trk("init", "--me", "michael")
+
+    def shape(home):
+        return {(r["name"], " ".join(r["sql"].replace('"', "").split()))
+                for r in query(home, "SELECT name, sql FROM sqlite_master WHERE tbl_name = 'items' AND sql IS NOT NULL")}
+
+    assert shape(fresh) == shape(v5_store) != set()
+    assert {r["name"] for r in query(v5_store, "PRAGMA table_info(items)")} == \
+        {r["name"] for r in query(fresh, "PRAGMA table_info(items)")}
+
+
+def test_a_migrated_store_takes_a_findings_item(trk, v5_store):
+    trk("changes", "--since", "0")
+    program = query(v5_store, "SELECT id FROM items WHERE kind = 'program' AND status = 'open' LIMIT 1")[0]["id"]
+    made = trk("new", "work-item", "Audit", "--form", "findings", "--parent", program, "--criterion", "It holds.",
+               "--section", "question=@" + str(_written(v5_store)), "--as", "michael")
+    assert made.code == 0, made.err
+    item = made.out.strip()
+    assert tuple(query(v5_store, "SELECT form, stage FROM items WHERE id = ?", item)[0]) == ("findings", "framed")
+
+
+def _written(home):
+    path = home.parent / "question.md"
+    path.write_text("Which readers drop keys?\n")
+    return path

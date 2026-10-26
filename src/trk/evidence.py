@@ -22,6 +22,7 @@ ITEM_GATES = {
     ("project", None): ("accept", "close"),
     ("work_item", "spec_bound"): ("framed", "specd", "built", "merged", "verified"),
     ("work_item", "self_contained"): ("framed", "specd", "built", "merged", "verified"),
+    ("work_item", "findings"): ("framed", "specd", "reviewed", "verified"),
     ("work_item", "decision"): ("close",),
 }
 
@@ -29,11 +30,14 @@ ANY = None  # a kind that may name any of its item's gates
 
 # The spec's kinds table: kind -> {gate it may name: the fields it needs there}. ANY maps every gate.
 KINDS = {
-    "judgment": {"specd": (), "accept": (), "close": ("criterion",)},
+    "judgment": {"specd": (), "accept": (), "close": ("criterion",), "reviewed": ()},
     "pr": {"built": ("ref", "sha")},
-    "test-run": {"built": ("ref", "sha"), "verified": ("ref", "sha", "criterion"), "close": ("ref", "criterion")},
-    "webtester-run": {"verified": ("ref", "sha", "criterion"), "close": ("ref", "criterion")},
-    "human-accept": {"verified": ("ref", "sha", "criterion"), "close": ("ref", "criterion")},
+    "test-run": {"built": ("ref", "sha"), "verified": ("ref", "sha", "criterion"), "close": ("ref", "criterion"),
+                 "reviewed": ("ref", "criterion")},
+    "webtester-run": {"verified": ("ref", "sha", "criterion"), "close": ("ref", "criterion"),
+                      "reviewed": ("ref", "criterion")},
+    "human-accept": {"verified": ("ref", "sha", "criterion"), "close": ("ref", "criterion"),
+                     "reviewed": ("ref", "criterion")},
     "merge": {"merged": ("ref", "sha")},
     "blast-radius": {"merged": ("sha", "detail")},
     "audit": {"merged": ("sha",)},
@@ -49,15 +53,22 @@ KINDS = {
 VERDICT = {
     "judgment": "pass", "pr": None, "test-run": "required", "webtester-run": "required", "human-accept": "required",
     "merge": None, "blast-radius": None, "audit": None, "human-review": "required", "review": "optional",
-    "skip": None, "plan": None, "doc": None, "retract": None,
+    "skip": None, "plan": None, "doc": "optional", "retract": None,
 }
+
+# A `doc` row carries a verdict only on a findings item's `reviewed` gate, for a criterion: an independent reader's
+# pass or fail on the findings it cites (UP-0018). Such a row is weighed like a run there; a doc row without one
+# never counts.
 
 # Kinds the tracker writes only through their own verb, with that verb's checks.
 MANAGED = {"skip": "trk skip", "blast-radius": "trk blast-radius", "audit": "trk ledger audit",
            "retract": "trk evidence retract"}
 
-# Kinds in no weighing group: they never count.
+# Kinds in no weighing group: they never count (a `doc` row with a verdict is weighed: see VERDICT).
 NOT_WEIGHED = ("review", "plan", "doc", "retract")
+
+# The kinds that prove a findings item's criterion at `reviewed`.
+REVIEWED_KINDS = ("test-run", "webtester-run", "human-accept", "doc")
 
 # The kinds that prove a criterion: for `verified`, and with `judgment` for `close`.
 RUNS = ("test-run", "webtester-run", "human-accept")
@@ -155,6 +166,9 @@ def _check_table(row, kind, gate, fields):
         raise usage(f"--verdict: {kind} evidence needs pass or fail")
     if rule == "pass" and verdict == "fail":
         raise usage(f"--verdict: {kind} evidence always passes; to withdraw one, retract it")
+    if kind == "doc" and verdict is not None and not (row["form"] == "findings" and gate == "reviewed"
+                                                       and fields["criterion"] is not None):
+        raise usage("--verdict: doc evidence carries one only on a findings item's reviewed gate, with --criterion")
 
 
 def _new_id(conn):
@@ -231,7 +245,11 @@ def add(tx, raw_id, kind, gate, *, criterion=None, ref=None, sha=None, verdict=N
         from . import stages
 
         stages.check_spec_judge(tx, row, gate)
-    if kind in BUILDER_KINDS and row["form"] in ("spec_bound", "self_contained"):
+    if gate == "reviewed" and (kind == "judgment" or kind == "doc" and verdict is not None):
+        from . import stages
+
+        stages.check_findings_judge(tx, row, criterion_row["n"] if kind == "doc" else None)
+    if kind in BUILDER_KINDS and row["form"] in ("spec_bound", "self_contained", "findings"):
         claims.require_held(tx, row, f"{kind} evidence")
     if VERDICT[kind] == "pass":
         verdict = "pass"
@@ -319,7 +337,7 @@ def weigh(conn, item):
     for r in rows:
         if r["id"] in retracted:
             r["reason"] = "retracted"
-        elif r["kind"] in NOT_WEIGHED:
+        elif r["kind"] in NOT_WEIGHED and not (r["kind"] == "doc" and r["verdict"] is not None):
             r["reason"] = "not-weighed"
         elif r["criterion_n"] is not None and r["criterion_version"] != versions.get(r["criterion_n"]):
             r["reason"] = "old-version"
@@ -419,7 +437,7 @@ def _cut_offs(conn, item):
             "SELECT seq, json_extract(data, '$.new') FROM journal WHERE item = ? AND change = 'stage.changed'"
             f" AND json_extract(data, '$.via') IN ({', '.join('?' * len(CUTTING))}) ORDER BY seq",
             (item["id"], *CUTTING)):
-        for gate in stages.STAGES[stages.STAGES.index(new) + 1:]:
+        for gate in stages.ALL_STAGES[stages.ALL_STAGES.index(new) + 1:]:
             cut[gate] = seq
     return cut
 

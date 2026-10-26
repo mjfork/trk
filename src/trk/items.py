@@ -9,13 +9,15 @@ from .store import ACTOR_RE, require_actor
 
 # Internal spelling -> CLI/JSON spelling.
 KIND_OUT = {"program": "program", "project": "project", "work_item": "work-item"}
-FORM_OUT = {"spec_bound": "spec-bound", "self_contained": "self-contained", "decision": "decision", "ask": "ask"}
+FORM_OUT = {"spec_bound": "spec-bound", "self_contained": "self-contained", "findings": "findings", "decision": "decision",
+            "ask": "ask"}
 RESOLUTION_OUT = {
     "done": "done",
     "wont_do": "wont-do",
     "superseded": "superseded",
     "out_of_scope": "out-of-scope",
     "duplicate": "duplicate",
+    "moot": "moot",
 }
 
 KIND_IN = {out: internal for internal, out in KIND_OUT.items()}
@@ -145,7 +147,7 @@ def _check_form(kind, form, subtype):
     if form == "ask":
         raise usage("asks are opened with `trk ask <parent> --to <role> \"<title>\" --question @file|-`")
     if kind == "work_item" and form is None:
-        raise usage("a work item needs --form spec-bound|self-contained|decision")
+        raise usage("a work item needs --form spec-bound|self-contained|findings|decision")
     if kind != "work_item" and form is not None:
         raise usage(f"--form applies to work items, not a {KIND_OUT[kind]}")
     if form == "decision" and subtype is None:
@@ -672,21 +674,22 @@ def check_outcome(outcome, missing, limit=OUTCOME_MAX, name="an outcome"):
 _CLOSE_EDGES = {
     "superseded": ("by", lambda tx, item_id, other: edges.supersede(tx, item_id, other)),
     "duplicate": ("of", lambda tx, item_id, other: edges.add(tx, item_id, "relates", other)),
+    "moot": ("by_ask", lambda tx, item_id, other: edges.add(tx, item_id, "relates", other)),
 }
 
 
-def _other_item(resolution, by, of):
-    """The raw id `--by` or `--of` names, after checking each goes with its resolution only."""
-    given = {"by": by, "of": of}
+def _other_item(resolution, by, of, by_ask=None):
+    """The raw id `--by`, `--of` or `--by-ask` names, after checking each goes with its resolution only."""
+    given = {"by": by, "of": of, "by_ask": by_ask}
     for resolution_needing, (key, _) in _CLOSE_EDGES.items():
         if given[key] is None and resolution == resolution_needing:
-            raise usage(f"--resolution {resolution} needs --{key} <id>")
+            raise usage(f"--resolution {resolution} needs --{key.replace('_', '-')} <id>")
         if given[key] is not None and resolution != resolution_needing:
-            raise usage(f"--{key} goes with --resolution {resolution_needing} only")
+            raise usage(f"--{key.replace('_', '-')} goes with --resolution {resolution_needing} only")
     return given[_CLOSE_EDGES[resolution][0]] if resolution in _CLOSE_EDGES else None
 
 
-def close(tx, raw_id, resolution, outcome, by=None, of=None):
+def close(tx, raw_id, resolution, outcome, by=None, of=None, by_ask=None):
     """Close an item with a resolution (CLI spelling) and a one-line outcome; journals `item.closed`.
 
     An open ask among the item's children or its descendants' refuses first with rule `open-asks`,
@@ -699,9 +702,11 @@ def close(tx, raw_id, resolution, outcome, by=None, of=None):
     refused with rule `ask-cannot-replace`. A live claim ends right after it (`claim.released`,
     reason closed), then the edge rows follow. An ask closes only as a withdrawal (asks.check_close),
     journaled `ask.withdrawn` in place of `item.closed`. A ticket closes `done` only by reaching
-    Verified (close_verified); asked here it is refused with `done-needs-verified`.
+    Verified (close_verified); asked here it is refused with `done-needs-verified`. `moot` (UP-0018) closes
+    work an answered ask made unnecessary: `by_ask` names that ask, which must be closed answered (rule
+    `ask-not-answered`); `item.closed` data carries `by_ask` and a relates edge records it.
     """
-    return _close(tx, raw_id, resolution, outcome, by, of, verified=False)
+    return _close(tx, raw_id, resolution, outcome, by, of, verified=False, by_ask=by_ask)
 
 
 def close_verified(tx, item_id, outcome):
@@ -709,12 +714,12 @@ def close_verified(tx, item_id, outcome):
     return _close(tx, item_id, "done", outcome, None, None, verified=True)
 
 
-def _close(tx, raw_id, resolution, outcome, by, of, verified):
+def _close(tx, raw_id, resolution, outcome, by, of, verified, by_ask=None):
     from . import stages
 
     if resolution not in RESOLUTION_IN:
         raise usage(f"unknown resolution {resolution!r}")
-    raw_other = _other_item(resolution, by, of)
+    raw_other = _other_item(resolution, by, of, by_ask)
     outcome = check_outcome(outcome, "close needs --outcome \"<one sentence>\"")
     conn = tx.conn
     row = get(conn, raw_id)
@@ -726,7 +731,13 @@ def _close(tx, raw_id, resolution, outcome, by, of, verified):
     other = other_row["id"] if other_row is not None else None
     if row["status"] == "closed":
         raise refused("already-closed", f"{item_id} is already closed", item=item_id)
-    if other_row is not None and other_row["form"] == "ask" and not is_ask:
+    if resolution == "moot":
+        if is_ask:
+            raise refused("ask-cannot-be-moot", f"{item_id} is an ask: withdraw it instead", item=item_id)
+        if other_row["form"] != "ask" or other_row["status"] != "closed" or other_row["resolution"] != "done":
+            raise refused("ask-not-answered", f"{other} is not an answered ask; moot cites the answered ask that made"
+                          f" {item_id} unnecessary", item=item_id)
+    elif other_row is not None and other_row["form"] == "ask" and not is_ask:
         raise refused("ask-cannot-replace", f"{other} is an ask, a question rather than work: it cannot replace"
                       f" or duplicate {item_id}", item=item_id)
     if is_ask:
@@ -743,7 +754,7 @@ def _close(tx, raw_id, resolution, outcome, by, of, verified):
         raise refused("open-children", f"{item_id} has open children; close them first: {listed}", item=item_id)
     if resolution == "done" and not verified and stages.is_ticket(row):
         raise refused("done-needs-verified", f"{item_id} is a ticket: it closes done only by reaching verified"
-                      f" (`trk advance {item_id} --outcome \"<one sentence>\"` from merged); any other"
+                      f" (`trk advance {item_id} --outcome \"<one sentence>\"` from {stages.route(row)[-2]}); any other"
                       " resolution closes it at any stage", item=item_id)
     if resolution == "done":
         _check_close_gate(conn, row)
@@ -817,8 +828,8 @@ def reopen(tx, raw_id, reason=None, to_stage=None):
             raise usage(f"{item_id} closed at verified: reopening it needs --to-stage <stage> (one before"
                         " verified) and --reason \"<one line>\"")
         reason = stages.check_reason(reason, "reopening a ticket closed at verified")
-        if to_stage not in stages.STAGES[:-1]:
-            raise usage(f"--to-stage is one of {', '.join(stages.STAGES[:-1])}, got {to_stage!r}")
+        if to_stage not in stages.route(row)[:-1]:
+            raise usage(f"--to-stage is one of {', '.join(stages.route(row)[:-1])}, got {to_stage!r}")
     elif reason is not None:
         raise usage("--reason goes with reopening an ask, or a ticket closed at verified, only")
     if row["status"] != "closed":
