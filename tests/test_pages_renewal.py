@@ -10,6 +10,7 @@ from fake_backend import TOKEN
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_setup import EXPIRES, ME, fake, journal, meta, setup_argv, token_file, tree  # noqa: F401 (fixtures)
 from trk import renewal
+from trk.top import KEY as TOP
 
 NEW_TOKEN = "tok_" + "n" * 40
 
@@ -64,7 +65,8 @@ def test_a_401_opens_one_renewal_ask_under_the_home_and_holds_every_write(trk, t
     assert meta(trk_home, "publish_renewal_ask") == ask["id"]
     assert fake.tool_calls("publish") == [] and fake.artifacts == {}
     assert all(row["dirty"] for row in trk("pages", "--json").json()["pages"])
-    assert "401" in page_row(trk_home, live["P"])["last_error"]
+    # The top-level page is sent first, so the 401 lands on its row; the hold is store-wide either way.
+    assert "401" in page_row(trk_home, TOP)["last_error"]
 
 
 def test_while_the_token_is_rejected_no_page_write_is_even_tried(trk, trk_home, live, fake):
@@ -118,7 +120,7 @@ def test_setup_with_a_new_token_answers_the_ask_and_the_next_flush_catches_up(tr
     assert {row["change"] for row in journal(trk_home, since)} == {"config.changed", "ask.answered"}
     report = flush(trk)
     assert report["held"] is False
-    assert report["published"] == [live[k] for k in ("P", "J", "D", "T")] + [ME]
+    assert report["published"] == [TOP] + [live[k] for k in ("P", "J", "D", "T")] + [ME]
     assert not any(row["dirty"] for row in trk("pages", "--json").json()["pages"])
 
 
@@ -152,7 +154,7 @@ def test_a_flush_within_14_days_of_expiry_opens_the_ask_once(trk, trk_home, live
     asks = renewal_asks(trk_home)
     assert len(asks) == (1 if opens else 0)
     assert report["renewal_ask"] == (asks[0]["id"] if opens else None)
-    assert report["held"] is False and len(report["published"]) == 5  # the token still works: nothing is held
+    assert report["held"] is False and len(report["published"]) == 6  # the token still works: nothing is held
     flush(trk)
     assert len(renewal_asks(trk_home)) == len(asks)
 
@@ -196,7 +198,7 @@ def test_a_closed_home_does_not_stop_the_flush(trk, trk_home, live, fake, monkey
     conn.close()
     report = flush(trk)
     assert report["renewal_ask"] is None and "closed" in report["renewal_ask_error"]
-    assert len(report["published"]) == 5
+    assert len(report["published"]) == 6
 
 
 # ----- AC 3: the question names the expiry date and the setup command, never a secret ---------------
@@ -242,7 +244,7 @@ def test_setup_by_an_agent_that_may_not_answer_leaves_the_ask_open_and_says_so(t
     assert json_result.json()["renewal_ask"] == {"id": ask["id"], "answered": False, "reason": "ask-permission"}
     # the token works and setup checked it: the hold is lifted even though the ask stays open
     report = flush(trk)
-    assert report["held"] is False and len(report["published"]) == 5
+    assert report["held"] is False and len(report["published"]) == 6
 
 
 def test_setup_with_no_renewal_ask_reports_none(trk, live, fake, tmp_path):

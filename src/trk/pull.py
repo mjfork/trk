@@ -58,7 +58,7 @@ not journaled; replies and registrations are, through their normal rows.
 
 import json
 
-from . import actors, asks, clock, comments, items, needs_you, pages, publisher, render, renewal
+from . import actors, asks, clock, comments, items, needs_you, pages, publisher, render, renewal, top
 from .errors import TrkError, refused
 from .flusher import pages_lock
 from .store import PUBLISHER
@@ -414,6 +414,8 @@ def _on_waiting(tx, item_id, slug, comment):
 def _box(conn, item_id, created):
     """The page's waiting box as it stood at `created`: the asks in the subtree (on a Needs-you page, those
     addressed to its person then) opened before it and not closed until after it, in page order."""
+    if top.is_key(item_id):
+        return []  # the top-level page carries no ask box: every comment on it is routed
     if needs_you.is_key(item_id):
         actor_id = needs_you.actor_of(item_id)
         candidates = [row for row in _all_asks(conn) if needs_you.addressee_at(conn, row, created) == actor_id]
@@ -436,7 +438,12 @@ def _route(tx, item_id, slug, comment):
     if comment.get("status") == "resolved" or any(
             reply.get("authorKind") == "assistant" for reply in comment.get("replies") or []):
         return IGNORED, None, None, False
-    owner = needs_you.actor_of(item_id) if needs_you.is_key(item_id) else items.hierarchy(tx.conn, item_id)["effective_owner"]
+    if top.is_key(item_id):  # the top-level page belongs to no item: its owner is the store's default
+        owner = tx.conn.execute("SELECT value FROM meta WHERE key = 'default_owner'").fetchone()[0]
+    elif needs_you.is_key(item_id):
+        owner = needs_you.actor_of(item_id)
+    else:
+        owner = items.hierarchy(tx.conn, item_id)["effective_owner"]
     comments.route(tx, item_id, slug, comment, _commenter(tx, comment), owner)
     return ROUTED, None, f"Sent to {actors.display(tx.conn, owner)}; they'll reply here.", False
 

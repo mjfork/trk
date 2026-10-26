@@ -13,7 +13,7 @@ import re
 import uuid
 from datetime import date, timedelta
 
-from . import adapter, clock, items, needs_you, publisher, render, renewal, spawn
+from . import adapter, clock, items, needs_you, publisher, render, renewal, spawn, top
 from .errors import refused, usage
 from .render import page_kind
 
@@ -135,19 +135,21 @@ def _set(conn, key, value):
 
 def page_rows(conn):
     """(item, level, pages row or None) for every page-bearing item, closed ones too, in tree order, then
-    every person's Needs-you page (its item a stand-in: id `needs-you:<actor>`, title and kind)."""
+    every person's Needs-you page (its item a stand-in: id `needs-you:<actor>`, title and kind), then the
+    top-level page (id `top:`), last because it links them all."""
     rows = {row["item_id"]: row for row in conn.execute("SELECT * FROM pages")}
     for item, level in items.outline(conn, include_closed=True):
         if page_kind(item) is not None:
             yield item, level, rows.get(item["id"])
     for actor_id in needs_you.people(conn):
         yield needs_you.entry(conn, actor_id), needs_you.LEVEL, rows.get(needs_you.key(actor_id))
+    yield top.entry(conn), top.LEVEL, rows.get(top.KEY)
 
 
 def page_key(conn, raw):
-    """The page a verb names: `needs-you:<actor>` for a person's page, else the item's id (exit 3 when
-    there is no such item or actor)."""
-    return needs_you.resolve_key(conn, raw) or items.get(conn, raw)["id"]
+    """The page a verb names: `top:` for the top-level page, `needs-you:<actor>` for a person's page, else
+    the item's id (exit 3 when there is no such item or actor)."""
+    return top.resolve_key(raw) or needs_you.resolve_key(conn, raw) or items.get(conn, raw)["id"]
 
 
 def status(st):
@@ -451,6 +453,10 @@ def mark(st):
                 found = every
             if found is not every and people and _touches_people(conn, row):
                 found = found | people
+            if found is not every and found:
+                # The top-level page shows every root's rollups and everything in progress, so any row
+                # that marks a page marks it as well (spec 04, The top-level page).
+                found = set(found) | {top.KEY}
             due = clock.stamp(clock.parse(row["at"]) + QUIET)
             for item in found:
                 first = marks.get(item, (None, row["at"]))[1]

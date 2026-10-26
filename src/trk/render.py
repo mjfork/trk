@@ -16,15 +16,22 @@ import re
 from . import asks, claims, clock, criteria, evidence, gitrepo, handoffs, items, ledger, markdown, ready, sections, stages
 from .errors import refused
 
-RENDER_VERSION = 7
+RENDER_VERSION = 8
 WAITING_HEADING = "Waiting on people"  # the waiting box's heading, which the pull's pointer at the boxes names
 
 NEEDS_YOU = "needs-you:"  # a person's page key in `pages`: `needs-you:<actor>` (see `needs_you`)
+TOP = "top:"  # the top-level page's key in `pages`: one per store (see `top`)
+TOP_LABEL = "All work"  # its title, and the first crumb of every page
+
+# A ticket counts as in progress from Built: its work exists but is not verified. Before that only a live
+# claim counts, on an item of any kind.
+IN_PROGRESS_STAGES = frozenset({"built", "merged", "reviewed"})
 
 # Page handles the template itself uses. A written section named like one renders as `s-<handle>`.
 RESERVED = frozenset({"header", "handoff", "tiles", "stage", "stage-funnel", "waiting", "projects", "open-decisions",
-                      "decisions-so-far", "other-children", "tickets", "children", "evidence", "review"})
-RESERVED_PREFIXES = ("child-", "ask-", "ac-", "evidence-", "ledger-", "stage-", "s-")
+                      "decisions-so-far", "other-children", "tickets", "children", "evidence", "review",
+                      "in-progress", "roots"})
+RESERVED_PREFIXES = ("child-", "ask-", "ac-", "evidence-", "ledger-", "stage-", "s-", "progress-")
 
 # The section open by default on each page kind: the one its gate turns on.
 OPEN_SECTION = {"program": ("destination",), "project": ("acceptance-criteria",),
@@ -97,6 +104,31 @@ def _page_url(url):
     return markdown.safe_url(url)
 
 
+def in_progress(conn, rows, now=None):
+    """[(row, live claim or None)] for the rows work has started on, most advanced first: an item of any
+    kind with a live claim, or a ticket at Built, Merged or Reviewed (its work exists but is unverified).
+    Closed items and asks never count. `rows` is any set of item rows; the caller decides the scope.
+
+    A claim counts while the store holds it open, not by its lease against the clock, so a lapsed lease
+    shows here until `trk sweep` ends it, exactly as the header's "in progress" flag already does."""
+    found = []
+    for row in rows:
+        if row["status"] != "open" or row["form"] == "ask":
+            continue
+        claim = claims.live(conn, row["id"])
+        if claim is None and not (stages.is_ticket(row) and row["stage"] in IN_PROGRESS_STAGES):
+            continue
+        found.append((row, claim))
+
+    def order(pair):
+        row, claim = pair
+        reached = stages.ALL_STAGES.index(row["stage"]) if row["stage"] in stages.ALL_STAGES else -1
+        return (0 if claim else 1, -reached, row["id"])
+
+    found.sort(key=order)
+    return found
+
+
 class _Page:
     def __init__(self, conn, row, kind):
         self.conn = conn
@@ -116,6 +148,11 @@ class _Page:
         """The actor's name, linking their Needs-you page once that page is published (plain text until then)."""
         url = _page_url(self.urls.get(NEEDS_YOU + actor_id)) if actor_id else None
         return f'<a href="{_e(url)}">{self.who(actor_id)}</a>' if url else self.who(actor_id)
+
+    def top_link(self):
+        """`All work` linking the top-level page once it is published (plain text until then)."""
+        url = _page_url(self.urls.get(TOP))
+        return f'<a href="{_e(url)}">{_e(TOP_LABEL)}</a>' if url else _e(TOP_LABEL)
 
     def needs_you(self):
         """Every published Needs-you page, linked by its person's name, by actor id; empty before any."""
@@ -244,7 +281,8 @@ class _Page:
 
     def html(self):
         row = self.row
-        body = [self.header(), self.tiles(), self.waiting(), *self.rollups(), *self.sections(), self.evidence(), self.review()]
+        body = [self.header(), self.tiles(), self.waiting(), self.in_progress_box(), *self.rollups(),
+                *self.sections(), self.evidence(), self.review()]
         return (
             "<!doctype html>\n"
             '<html lang="en">\n<head>\n<meta charset="utf-8">\n'
@@ -257,10 +295,11 @@ class _Page:
     def header(self):
         row = self.row
         chain = items.lineage(self.conn, row["id"])[1:]  # ancestors, nearest first
-        crumbs = ""
-        if chain:
-            links = [self.link(link["id"], items.get(self.conn, link["id"])["title"]) for link in reversed(chain)]
-            crumbs = f'<nav class="crumbs">{" <span>›</span> ".join(links)}</nav>\n'
+        # The trail always starts at the top-level page, so every page says where it sits and leads back up;
+        # a root item's page has no ancestors and shows that one crumb alone.
+        links = [self.top_link()] + [self.link(link["id"], items.get(self.conn, link["id"])["title"])
+                                     for link in reversed(chain)]
+        crumbs = f'<nav class="crumbs">{" <span>›</span> ".join(links)}</nav>\n'
         claim = claims.live(self.conn, row["id"])
         facts = [("Owner", self.who(self.owner(row)))]
         if claim is not None:
@@ -447,6 +486,31 @@ class _Page:
             ]
         return [self.table("children", "Children", ("Item", "Kind", "Owner", "Open asks", "Status"), children,
                            self.child_row)]
+
+    def in_progress_box(self):
+        """What work has started on below this page (everything in the store, on the top-level page), with
+        who holds it: the one place a page says what is moving underneath it. A page with nothing below it
+        at all, as every ticket has, renders no box."""
+        below = [row for row, _level in items.outline(self.conn, include_closed=True)] \
+            if self.row is None else self.subtree(self.row["id"])
+        if not below:
+            return ""
+        found = in_progress(self.conn, below)
+        heading = "<h2>In progress</h2>"
+        note = '<p class="none">Nothing below this is claimed or built</p>'
+        if not found:
+            return f'<section class="rollup"{_attr("in-progress")}>\n{heading}\n{note}\n</section>'
+        lines = []
+        for row, claim in found:
+            who = self.who(claim["actor"]) if claim else self.who(self.owner(row))
+            since = stamp(claim["taken_at"]) if claim else stamp(row["updated_at"])
+            stage = STAGE_LABEL.get(row["stage"], "—") if stages.is_ticket(row) else "—"
+            cells = [self.link(row["id"], row["title"]), _e(self.kind_label(row)), stage, who, since,
+                     self.flag_pills(row)]
+            lines.append(f'<tr{_attr("progress-" + row["id"])}>' + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+        head = "".join(f"<th>{name}</th>" for name in ("Item", "Kind", "Stage", "Who", "Since", "Flags"))
+        return (f'<section class="rollup"{_attr("in-progress")}>\n{heading}\n<div class="scroll"><table>\n'
+                f"<thead><tr>{head}</tr></thead>\n<tbody>\n" + "\n".join(lines) + "\n</tbody>\n</table></div>\n</section>")
 
     def table(self, handle, title, columns, rows, cells):
         if not rows:

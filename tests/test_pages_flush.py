@@ -11,6 +11,7 @@ import pytest
 from fake_backend import MAX_BODY_BYTES
 from test_pages_setup import ME, fake, journal, setup_argv, token_file, tree  # noqa: F401 (fixtures)
 from trk import render, store
+from trk.top import KEY as TOP
 
 
 @pytest.fixture
@@ -58,7 +59,9 @@ def test_one_flush_publishes_every_page_top_down_shared_on_the_team(trk, trk_hom
     since = journal(trk_home)[-1]["seq"]
     flush(trk)
     published = fake.tool_calls("publish")
-    assert [tag_of(args) for args in published] == [f"trk:{live[k]}" for k in ("P", "J", "D", "T")] + [f"trk:{ME}"]
+    # The top-level page goes first: every page published after it is born linking it (spec 04).
+    assert [tag_of(args) for args in published] == \
+        [f"trk:{TOP}"] + [f"trk:{live[k]}" for k in ("P", "J", "D", "T")] + [f"trk:{ME}"]
     assert all(args["team"] == "tracker" for args in published)
     assert all(args["tags"] == [tag_of(args)] for args in published)
     created = [row for row in journal(trk_home, since) if row["change"] == "page.created"]
@@ -77,7 +80,8 @@ def test_the_same_run_patches_the_parents_so_every_link_resolves(trk, trk_home, 
     # P and J were patched once their children existed; D and T were born linked to their ancestors.
     assert {key: len(fake.artifacts[slugs[key]]["versions"]) for key in live} == {"P": 2, "J": 2, "D": 1, "T": 1}
     assert all("team" not in args for args in fake.tool_calls("update"))
-    urls["me"] = page_row(trk_home, ME)["url"]  # the top-level page links michael's Needs-you page
+    urls["me"] = page_row(trk_home, ME)["url"]  # a root item's page links michael's Needs-you page
+    urls["top"] = page_row(trk_home, TOP)["url"]  # and every page's trail links the top-level page
     every_url = set(urls.values())
     for key, children in (("P", ["J", "me"]), ("J", ["D", "T"]), ("D", ["P", "J"]), ("T", ["P", "J"])):
         body = fake.body(slugs[key])
@@ -104,8 +108,8 @@ def test_show_carries_the_page_and_a_second_flush_writes_nothing(trk, trk_home, 
 def test_flush_reports_what_it_did(trk, live, fake):
     report = flush(trk)
     assert report["schema"] == 1
-    assert report["published"] == [live[k] for k in ("P", "J", "D", "T")] + [ME]
-    assert report["updated"] == [live["P"], live["J"]]
+    assert report["published"] == [TOP] + [live[k] for k in ("P", "J", "D", "T")] + [ME]
+    assert report["updated"] == [TOP, live["P"], live["J"]]  # the top page's roots links resolve too
     assert report["failed"] == []
 
 
@@ -118,7 +122,7 @@ def test_item_flag_limits_the_flush(trk, trk_home, live, fake):
 def test_flush_without_now_publishes_new_pages(trk, trk_home, live, fake):
     result = trk("pages", "flush")
     assert result.code == 0, result.err
-    assert len(fake.tool_calls("publish")) == 5  # four items and michael's Needs-you page
+    assert len(fake.tool_calls("publish")) == 6  # the top-level page, four items, michael's Needs-you page
 
 
 def test_flush_wait_refuses_now(trk, live, fake):
@@ -172,7 +176,7 @@ def test_a_502_after_the_publish_was_applied_adopts_the_page_by_its_tag(trk, trk
     fake.fail_next("502-after", tool="publish")
     report = flush(trk)
     tags = [tag for art in fake.artifacts.values() for tag in art["tags"]]
-    assert sorted(tags) == sorted([f"trk:{live[k]}" for k in live] + [f"trk:{ME}"])  # one page each, no duplicate
+    assert sorted(tags) == sorted([f"trk:{live[k]}" for k in live] + [f"trk:{ME}", f"trk:{TOP}"])  # one each
     assert len(fake.tool_calls("find_tagged")) >= 1
     row = page_row(trk_home, live["P"])
     assert row["state"] == "live" and row["slug"] in fake.artifacts
@@ -251,7 +255,7 @@ def test_a_refused_publish_is_recorded_and_the_others_go_on(trk, trk_home, live,
     assert fake.tool_calls("find_tagged") == []
     row = page_row(trk_home, live["P"])
     assert row["slug"] is None and row["state"] == "live" and "unknown_team" in row["last_error"]
-    assert sorted(report["failed"]) == sorted([*live.values(), ME])
+    assert sorted(report["failed"]) == sorted([*live.values(), ME, TOP])
     assert trk("pages", "--errors", "--json").json()["pages"][0]["last_error"] == row["last_error"]
 
 
@@ -301,7 +305,7 @@ def test_a_new_page_is_never_published_while_the_team_is_unset(trk, trk_home, li
     conn.close()
     report = flush(trk)
     assert fake.tool_calls("publish") == []
-    assert sorted(report["failed"]) == sorted([*live.values(), ME])
+    assert sorted(report["failed"]) == sorted([*live.values(), ME, TOP])
     assert "team" in page_row(trk_home, live["P"])["last_error"]
 
 

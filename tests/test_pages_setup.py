@@ -268,7 +268,7 @@ def test_pages_lists_every_page_bearing_item_dirty_until_published(trk, tree, fa
     assert [(row["item"], row["kind"], row["title"]) for row in listing["pages"]] == [
         (tree["P"], "program", "P"), (tree["J"], "project", "J"), (tree["D"], "decision", "D"),
         (tree["T"], "ticket", "T"), ("needs-you:kim", "needs-you", "Needs you: kim"),
-        (ME, "needs-you", "Needs you: michael")]
+        (ME, "needs-you", "Needs you: michael"), ("top:", "top", "All work")]
     for row in listing["pages"]:
         assert row == {"item": row["item"], "kind": row["kind"], "title": row["title"], "slug": None, "url": None,
                        "version": None, "published_at": None, "dirty": True, "due_at": None, "last_error": None}
@@ -294,7 +294,7 @@ def test_pages_shows_the_bookkeeping_and_filters_dirty_and_errors(trk, trk_home,
     assert rows[tree["J"]]["dirty"] is True
     assert rows[tree["J"]]["due_at"] == "2026-10-11T09:12:00.000Z"
     dirty = [row["item"] for row in trk("pages", "--dirty", "--json").json()["pages"]]
-    assert dirty == [tree["J"], tree["D"], tree["T"], ME]
+    assert dirty == [tree["J"], tree["D"], tree["T"], ME, "top:"]
     errors = [row["item"] for row in trk("pages", "--errors", "--json").json()["pages"]]
     assert errors == [tree["J"]]
     text = trk("pages").out
@@ -302,7 +302,7 @@ def test_pages_shows_the_bookkeeping_and_filters_dirty_and_errors(trk, trk_home,
     assert "2026-10-11T09:10:00.000Z" in text
     assert "tool_not_allowed (update)" in text
     lines = text.strip().splitlines()
-    assert len(lines) == 5 and lines[4].startswith(ME)
+    assert len(lines) == 6 and lines[4].startswith(ME) and lines[5].startswith("top:")
     assert lines[0].startswith(tree["P"])
 
 

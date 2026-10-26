@@ -12,6 +12,7 @@ from gated import section_file, ticket
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_setup import ME, fake, journal, meta, token_file, tree  # noqa: F401 (fixtures)
 from trk import pages, render, store
+from trk.top import KEY as TOP
 
 T0 = "2026-10-11T09:00:00Z"
 
@@ -41,12 +42,18 @@ def edited(args):
     return [edit["section"] for edit in args.get("edits") or []]
 
 
-def dirty(trk_home):
+def all_dirty(trk_home):
     conn = db(trk_home)
     try:
         return {row["item_id"] for row in conn.execute("SELECT item_id FROM pages WHERE due_at IS NOT NULL")}
     finally:
         conn.close()
+
+
+def dirty(trk_home):
+    """The marked pages other than the top-level one, which every write marks by design (spec 04, The
+    top-level page); `test_every_write_marks_the_top_level_page` is what covers it."""
+    return all_dirty(trk_home) - {TOP}
 
 
 @pytest.fixture
@@ -169,6 +176,14 @@ def test_role_changes_mark_every_page(trk, trk_home, published, monkeypatch):
     ok(trk, "roles", "set", "product", "michael")
     quiet_flush(trk)
     assert dirty(trk_home) == {published[k]["id"] for k in published} | {ME}
+
+
+def test_every_write_marks_the_top_level_page(trk, trk_home, published, monkeypatch):
+    """It shows every root's rollups and everything in progress, so any row that marks a page marks it."""
+    at(monkeypatch, "2026-10-11T09:05:00Z")
+    ok(trk, "section", "set", published["T"]["id"], "what-to-build", "--file", str(section_file("w", "Build it.\n")))
+    quiet_flush(trk)
+    assert TOP in all_dirty(trk_home)
 
 
 def test_marks_keep_the_latest_due_time_and_the_first_dirty_time():
@@ -385,7 +400,8 @@ def test_a_crash_while_marking_leaves_the_cursor_and_marks_untouched(trk, trk_ho
 
     def crashing(conn, key, value):  # the marks are written; the cursor advance is next
         if key == "publish_cursor":
-            assert conn.execute("SELECT COUNT(*) FROM pages WHERE due_at IS NOT NULL").fetchone()[0] == 4
+            # T, J, P, D and the top-level page, which every write marks
+            assert conn.execute("SELECT COUNT(*) FROM pages WHERE due_at IS NOT NULL").fetchone()[0] == 5
             raise RuntimeError("crash before the cursor moved")
         return real(conn, key, value)
 

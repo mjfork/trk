@@ -1698,12 +1698,14 @@ def cmd_pages_timer(args):
 
 
 def cmd_pages_render(args):
-    from . import needs_you, render  # the page modules load only for the verbs that need them
+    from . import needs_you, render, top  # the page modules load only for the verbs that need them
 
     st = store.open_store()
     try:
-        item_id = needs_you.resolve_key(st.conn, args.id)
-        if item_id is not None:
+        if top.is_key(args.id):
+            item_id, page = top.KEY, top.render_page(st.conn)
+        elif needs_you.resolve_key(st.conn, args.id) is not None:
+            item_id = needs_you.resolve_key(st.conn, args.id)
             page = needs_you.render_page(st.conn, needs_you.actor_of(item_id))
         else:
             item_id = items.get(st.conn, args.id)["id"]

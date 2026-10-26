@@ -47,7 +47,7 @@ import time
 from contextlib import contextmanager
 from datetime import timedelta
 
-from . import clock, items, needs_you, pages, publisher, render, renewal, spawn
+from . import clock, items, needs_you, pages, publisher, render, renewal, spawn, top
 from .errors import refused
 from .store import PUBLISHER
 
@@ -296,6 +296,8 @@ def _snapshot(st, item_id):
     before any network call."""
     st.conn.execute("BEGIN")
     try:
+        if top.is_key(item_id):
+            return page_title(top.title(st.conn)), top.render_page(st.conn)
         if needs_you.is_key(item_id):
             actor_id = needs_you.actor_of(item_id)
             return page_title(needs_you.title(st.conn, actor_id)), needs_you.render_page(st.conn, actor_id)
@@ -480,7 +482,8 @@ def _published(st, item_id, slug, url, version, hashes, title, *, created):
     it marks every published page due at once instead, itself included, since any ask box can name the
     person and every top-level page links each person's page. Those that don't render the same and
     are not written."""
-    if not created or needs_you.is_key(item_id):  # a person's page is no item: no `page.created` row
+    # Neither a person's page nor the top-level page is an item: no `page.created` row for either.
+    if not created or needs_you.is_key(item_id) or top.is_key(item_id):
         with st.write_lock():
             now = clock.stamp(clock.now())
             if _dropped_asks(st.conn, item_id, hashes):  # the next pull lists the page once more
@@ -496,7 +499,7 @@ def _published(st, item_id, slug, url, version, hashes, title, *, created):
         tx.journal("page.created", items.feed_fields(conn, item_id), data={"slug": slug, "url": url})
         parent = items.get(conn, item_id)["parent_id"]
         below = [row["id"] for row, _ in items.outline(conn, item_id, include_closed=True)[1:]]
-        for other in [item_id] + ([parent] if parent else []) + below + needs_you.page_keys(conn):
+        for other in [item_id] + ([parent] if parent else []) + below + needs_you.page_keys(conn) + [top.KEY]:
             conn.execute("UPDATE pages SET due_at = ?, first_dirty_at = COALESCE(first_dirty_at, ?) "
                          "WHERE item_id = ? AND (due_at IS NULL OR due_at > ?)", (now, now, other, now))
 

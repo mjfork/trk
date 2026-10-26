@@ -23,6 +23,7 @@ from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_renewal import rejected, renew, renewal_asks
 from test_pages_setup import ME, fake, journal, setup_argv, token_file, tree  # noqa: F401 (fixtures)
 from trk import clock, flusher, pages, spawn, store, timer
+from trk.top import KEY as TOP
 
 REAL_LAUNCH = spawn.launch  # conftest swaps it for a recorder in every test
 SRC = Path(__file__).resolve().parent.parent / "src"
@@ -205,7 +206,8 @@ def test_flush_wait_sleeps_until_the_page_is_due_then_sends_it_and_exits(trk, tr
     assert sleeps == [60.0]  # due 60 s after the row
     assert seen == [(os.getpid(), True, True)]  # registered while it slept; neither lock held
     assert report["updated"] == [published["T"]["id"]]  # P and J were marked too, and render the same
-    assert sorted(report["unchanged"]) == sorted(published[k]["id"] for k in ("P", "J"))
+    # The top-level page is marked by every write and renders the same: it shows no section of a ticket.
+    assert sorted(report["unchanged"]) == sorted([*(published[k]["id"] for k in ("P", "J")), TOP])
     assert len(writes_to(fake, published["T"]["slug"])) == 1
     assert dirty(trk_home) == set()
     assert not (trk_home / spawn.PID_NAME).exists()
@@ -334,7 +336,7 @@ def test_pages_lock_refuses_an_open_write_transaction(trk, trk_home, live):
 def test_tick_publishes_what_is_due_without_waiting(trk, trk_home, live, fake, sleeps):
     result = trk("pages", "tick", "--json")
     assert result.code == 0, result.err
-    assert sorted(result.json()["published"]) == sorted([*live.values(), ME])
+    assert sorted(result.json()["published"]) == sorted([*live.values(), ME, TOP])
     assert sleeps == []
     assert not (trk_home / spawn.PID_NAME).exists()
 
@@ -350,7 +352,7 @@ def test_tick_runs_the_token_check_and_the_next_tick_after_setup_catches_up(trk,
     assert renew(trk, fake, tmp_path, live["P"], "--as", "michael").code == 0
     caught_up = trk("pages", "tick", "--json").json()
     assert caught_up["held"] is False
-    assert caught_up["published"] == [live[k] for k in ("P", "J", "D", "T")] + [ME]
+    assert caught_up["published"] == [TOP] + [live[k] for k in ("P", "J", "D", "T")] + [ME]
     assert renewal_asks(trk_home)[0]["status"] == "closed"
 
 
@@ -548,10 +550,11 @@ def test_a_write_starts_a_real_detached_flusher_that_publishes_and_exits(trk, tr
     section_set(trk, tree["T"], "Detached.\n")
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
-        if len(list(out.glob("*.html"))) == 5 and not (trk_home / spawn.PID_NAME).exists():
+        if len(list(out.glob("*.html"))) == 6 and not (trk_home / spawn.PID_NAME).exists():
             break
         time.sleep(0.1)
-    assert len(list(out.glob("*.html"))) == 5, (trk_home / spawn.LOG_NAME).read_text()
+    # four items, michael's Needs-you page and the top-level page
+    assert len(list(out.glob("*.html"))) == 6, (trk_home / spawn.LOG_NAME).read_text()
     assert not (trk_home / spawn.PID_NAME).exists()
     assert (trk_home / spawn.LOG_NAME).exists()
 

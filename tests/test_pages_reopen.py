@@ -8,6 +8,7 @@ import pytest
 
 import fake_backend
 from trk import pages
+from trk.top import KEY as TOP
 from test_pages_flush import db, flush, live, page_row  # noqa: F401 (fixtures)
 from test_pages_pull import (RECEIVED, TABLE, actor_row, ask, asked, body, confirm, dispositions, item,  # noqa: F401
                              mode, outbox, pulled, replies, slug)
@@ -336,7 +337,9 @@ def test_a_401_in_pull_before_drop_holds_the_flush_and_drops_nothing(trk, trk_ho
     fake.fail_next("401", tool="list_comments")
     report = flush(trk)
     assert report["held"] is True and report["renewal_ask"]
-    assert report["updated"] == [] and _drops(fake, trk_home, withdrawn) == []
+    # The top-level page drops no ask handle (it carries none), so the hold does not hold it back: the
+    # withdrawal changed its "asks waiting" tile.
+    assert report["updated"] == [TOP] and _drops(fake, trk_home, withdrawn) == []
     assert fake.tool_calls("reply") == []
     assert shows(fake, trk_home, withdrawn["D"], f"ask-{withdrawn['A']}")
 

@@ -238,17 +238,18 @@ def test_program_children_land_in_the_first_table_that_matches(trk, world):
     table = {handle[len("child-"):]: outer[0] for handle, outer in parsed.found if handle.startswith("child-")}
     assert table == {world["J"]: "projects", world["K"]: "projects", world["X"]: "decisions-so-far",
                      world["Q"]: "out-of-scope", world["O"]: "other-children", world["A"]: "other-children"}
-    assert parsed.top_level()[:8] == ["header", "tiles", "waiting", "projects", "open-decisions", "decisions-so-far",
-                                      "out-of-scope", "other-children"]
+    assert parsed.top_level()[:9] == ["header", "tiles", "waiting", "in-progress", "projects", "open-decisions",
+                                      "decisions-so-far", "out-of-scope", "other-children"]
 
 
 def test_spec_ac3_the_project_page_holds_the_board_in_order(trk, world):
     first, second = page(trk, world["J"]), page(trk, world["J"])
     assert first == second
     parsed = Handles(first)
-    assert parsed.top_level() == ["header", "tiles", "waiting", "tickets", "other-children", "problem", "solution",
-                                  "user-stories", "implementation-decisions", "testing-decisions",
-                                  "acceptance-criteria", "out-of-scope", "evidence"]  # the accept judgment
+    assert parsed.top_level() == ["header", "tiles", "waiting", "in-progress", "tickets", "other-children",
+                                  "problem", "solution", "user-stories", "implementation-decisions",
+                                  "testing-decisions", "acceptance-criteria", "out-of-scope",
+                                  "evidence"]  # the accept judgment
     assert len(parsed.handles) == len(set(parsed.handles))
     assert parsed.srcs == [] and parsed.links == 0
     assert dict(parsed.found)["stage-funnel"] == ["tiles"]
@@ -290,7 +291,7 @@ def test_a_written_section_on_a_reserved_handle_renders_under_s_prefix(handle, k
 
 def test_reserved_handles_on_the_program_page(trk, world):
     parsed = Handles(page(trk, world["P"]))
-    assert parsed.top_level()[8:] == ["destination", "notes", "not-yet-specified", "s-out-of-scope"]
+    assert parsed.top_level()[9:] == ["destination", "notes", "not-yet-specified", "s-out-of-scope"]
 
 
 # --- Markdown --------------------------------------------------------------------------------

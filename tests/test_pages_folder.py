@@ -11,6 +11,7 @@ import pytest
 
 from test_pages_setup import ME, journal, tree  # noqa: F401 (fixtures)
 from trk import adapter, folder, publisher
+from trk.top import KEY as TOP
 
 
 def command(out, *extra):
@@ -66,9 +67,9 @@ def test_a_program_that_cannot_run_is_refused(trk, tree):
 
 def test_a_flush_writes_every_page_with_links_between_them(trk, live, out):
     report = flush(trk)
-    assert sorted(report["published"]) == sorted([*live.values(), ME])
+    assert sorted(report["published"]) == sorted([*live.values(), ME, TOP])
     files = {path.stem for path in out.glob("*.html")}
-    assert files == {*live.values(), ME.replace(":", "-")}
+    assert files == {*live.values(), ME.replace(":", "-"), "top"}  # the adapter slugs `top:` as `top`
     index = json.loads((out / folder.INDEX).read_text())
     assert index[live["P"]]["tag"] == f"trk:{live['P']}"
     j = (out / f"{live['J']}.html").read_text()
