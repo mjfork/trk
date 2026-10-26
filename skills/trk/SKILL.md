@@ -23,6 +23,8 @@ Copy-paste command patterns for every step are in
 (verbs, JSON replies, refusals) is "The contract" in
 `docs/specs/05-workflow-skills-integration.md` of the trk repo.
 
+**Site guidance.** When you load this skill, run `trk guidance trk` once. If it prints text, follow it as part of this skill. Site guidance adds rules and may narrow these ones (a stricter limit, a site's own tool or path, a named actor). It never loosens a rule here and never overrides a trk refusal: where it conflicts, this skill and trk win, and you report the conflict to whoever started you. If it prints nothing, there is no site guidance. The order is trk's refusals and gates, then this skill, then site guidance. A site never edits an installed skill: its rules go in the file `trk guidance <skill> --path` names (one per skill; a rule for every trk use goes in `trk.md`, which the other trk skills reach by loading this one).
+
 ## 1. Rules for every call
 
 1. **Live store, installed build.** Run plain `trk …` for the live store. With
@@ -39,7 +41,7 @@ Copy-paste command patterns for every step are in
    to record *their* explicit answer or action, and say so in the note.
    In an agent session (`$CLAUDECODE` or `$TRK_SESSION` set) a write with no
    `--as` and no `$TRK_ACTOR` is refused: exit 2, rule `actor-required`, nothing
-   written. Reads and `trk claim renew` are exempt. Michael's ruling tr-shdmq, 2026-10-22: "Refuse the write when it comes from an agent session; your own terminal keeps working as you."
+   written. Reads and `trk claim renew` are exempt. The rule: "Refuse the write when it comes from an agent session; your own terminal keeps working as you."
 3. **Session.** Claims and judged writes carry your Claude session uuid. The
    user-wide hooks export `$TRK_SESSION` and renew your leases every turn.
    Without them pass `--session <uuid>` and run `trk claim renew --session
@@ -58,7 +60,7 @@ Copy-paste command patterns for every step are in
    route around a gate (retracting evidence you don't like, writing as another
    actor, skipping a stage that has repo changes).
 6. **Name items by title with the id beside it**: `Spec: Asks and owners
-   (tr-1ax2j)`. Ids stay plain text.
+   (tr-xxxxx)`. Ids stay plain text.
 7. **Bodies are markdown via stdin or a file** (`--file F`, `HANDLE=@F`,
    `HANDLE=-`), at most 256 KiB. `--note` and `--outcome` take at most 300
    characters. Every one-line text flag (`--note`, `--judgment`, `--decided`, `--outcome`, `--why`,
@@ -163,7 +165,7 @@ sound|risky|wrong --note …`. Settling: `ledger settle <id> <n> fixed --sha S`,
 `accepted|overruled --ask <A>` where A is an `engineering` ask tied to the row
 and answered by a person. A confirmed reward-hacking flag is only ever `fixed`.
 
-**RED tickets: write the review brief before you audit.** Michael's rule, 2026-10-24: "something rated red needs to have enough context and information that you know why it is red and what risk you are taking and what the consequences could be." The nine-heading brief is that context. A RED-read ask whose ticket has no complete brief is
+**RED tickets: write the review brief before you audit.** The rule: "something rated red needs to have enough context and information that you know why it is red and what risk you are taking and what the consequences could be." The nine-heading brief is that context. A RED-read ask whose ticket has no complete brief is
 **held**: it stays open (and still blocks the ticket) but `trk waiting --me <approver>` and the Needs-you page leave it
 out, and a direct `trk review record <id> approved` is refused `no-brief` naming the missing headings. The asker sees
 it with `trk waiting --me <asker>` (or `--all`, text only) marked `[held: review brief missing: …]`; `--me <asker> --json`
@@ -197,7 +199,7 @@ GREEN need no brief.
 - Close a project `done` with one `--kind judgment --gate close
   --criterion ac-<n> --verdict pass --note "<what delivered it>"` per live
   criterion, after every child is closed.
-- A **program** close is harder (tr-43mme): a `judgment` never counts. Each live
+- A **program** close is harder: a `judgment` never counts. Each live
   criterion needs a passing `test-run` or `webtester-run` with `--ref` and the
   release `--sha`, or a `human-accept` from the actor the criterion names. A
   criterion names its acceptor in its text: `accept-by: michael` or
@@ -235,10 +237,10 @@ questions. The item leaves the frontier until the ask closes. `trk waiting --jso
 answer --json`. Withdraw one you no longer need with `trk withdraw <ask>
 --reason …`. `trk close` on an item with an open ask (its own or a descendant's)
 is refused with `open-asks` and names each one: answer it or withdraw it
-first; a close never withdraws an ask (Michael's ruling tr-29kgp, 2026-10-22:
-"Refuse to close until each open question is answered or withdrawn on purpose").
-A person's reply is only a proposed answer: it may not answer the question
-(Michael, 2026-10-23). When a client passes on a person's free text, such as a
+first; a close never withdraws an ask (the rule: "Refuse to close until each
+open question is answered or withdrawn on purpose").
+A person's reply is only a proposed answer: it may not answer the question.
+When a client passes on a person's free text, such as a
 phone answer card, record it with `trk reply <ask> --as <person> --body -`. The
 ask stays open and the reply is listed as `reply-<n>` in the ask's `replies`, with its full text as `body`.
 Every ask in `waiting --json` and `show --json` carries `rev` (latest journal seq touching it, replies included; a RED-read ask also counts its ticket) and `awaiting` (`asker` or `addressee`, by who wrote last; null once closed). An open RED-read ask also carries `red_read` `{ticket, sha, current, roles, files_count, brief, brief_lacking, brief_complete, brief_writer}`: `sha` is the full RED head to pass to `trk review record --sha`, `brief` the nine headings' text (or null), read by the gates' own parser. `current` is false after a newer `pr` head before a re-rating, or after `reopen-stage`. Show Approve only when `brief_complete` and `current`.

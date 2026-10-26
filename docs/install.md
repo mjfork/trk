@@ -62,7 +62,7 @@ If `$TRK_HOME` (default `~/.local/share/trk`) holds no `store.db`, the script ru
 The script copies `skills/trk`, `skills/trk-drive-program` and `skills/trk-create-program` into `~/.claude/skills`.
 
 - A skill that is already there and identical is skipped.
-- A skill that is there but different makes the script stop before it changes anything. It prints which files differ. Move your edits into `skills/` in the repo, or run again with `--force`, which keeps the old copy as `<name>.bak-<time>` and replaces it. `--dry-run` reports which skills it would replace. The repo copy is the source of truth, so edit skills in `skills/`.
+- A skill that is there but different makes the script stop before it changes anything. It prints which files differ. Move your edits into `skills/` in the repo, or run again with `--force`, which keeps the old copy as `~/.local/share/trk-skill-backups/<name>.<time>` (outside `~/.claude/skills`, so it never loads as a skill) and replaces it. `--dry-run` reports which skills it would replace. The repo copy is the source of truth, so edit skills in `skills/`.
 
 ### 5. The hooks
 

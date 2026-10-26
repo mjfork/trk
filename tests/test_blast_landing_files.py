@@ -340,3 +340,29 @@ def test_a_rating_that_lists_more_than_the_landing_keeps_the_review_need(trk, tr
     tamper(trk_home, row["id"], edit)
     assert review_state(trk, t) == [(later["m"], False, "wrong-sha")]
     assert "human-review" in needs(trk, t)
+
+
+# --- UP-0019: a short sha is stored in full, so `red_read.sha` meets its contract ---
+
+def test_a_short_sha_on_a_red_rating_is_stored_in_full(trk, later):
+    t = merged_ticket(trk, later)
+    row = trk("blast-radius", t, "--sha", later["later"][:9], "--base", later["base"], "--json",
+              "--as", "worker").json()["evidence"]
+    assert row["sha"] == later["later"]
+    write_brief(trk, t)
+    [ask] = red_asks(trk)
+    assert ask["red_read"]["sha"] == later["later"]
+
+
+def test_a_short_red_rating_already_stored_reads_in_full(trk, later, trk_home):
+    import sqlite3
+    t = merged_ticket(trk, later)
+    ok(trk, "blast-radius", t, "--sha", later["later"], "--base", later["base"], "--as", "worker")
+    write_brief(trk, t)
+    db = sqlite3.connect(trk_home / "store.db")
+    with db:  # a row as an older trk stored it: lift the append-only trigger for this one write only
+        db.execute("DROP TRIGGER evidence_no_update")
+        db.execute("UPDATE evidence SET sha = ? WHERE kind = 'blast-radius'", (later["later"][:9],))
+    db.close()
+    [ask] = red_asks(trk)
+    assert ask["red_read"]["sha"] == later["later"]

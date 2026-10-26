@@ -12,6 +12,8 @@ Load the `trk` skill before any trk call; its rules (plain `trk` for the live st
 
 Every question to the user: one per turn, about the work (never CLI mechanics), with your recommended answer as option 1 and what it unblocks.
 
+**Site guidance.** When you load this skill, run `trk guidance trk-create-program` once. If it prints text, follow it as part of this skill. Site guidance adds rules and may narrow these ones (a stricter limit, a site's own tool or path, a named actor). It never loosens a rule here and never overrides a trk refusal: where it conflicts, this skill and trk win, and you report the conflict to whoever started you. If it prints nothing, there is no site guidance.
+
 ## 1. Hear the work
 
 If the invocation carries no description, ask the user what the work is and wait. Done when you have the problem, why it matters, and their picture of done in their words. Note any JIRA ticket or epic URL for `--jira`.

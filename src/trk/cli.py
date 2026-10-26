@@ -6,8 +6,8 @@ import os
 import sqlite3
 import sys
 
-from . import (actors, asks, claims, clock, comments, config, edges, feed, handoffs, items, ready, roles, sections, store,
-               worktrees)
+from . import (actors, asks, claims, clock, comments, config, edges, feed, guidance, handoffs, items, ready, roles, sections,
+               store, worktrees)
 from .errors import TrkError, usage
 
 
@@ -273,6 +273,12 @@ def build_parser():
     worktree_clear = worktree_verbs.add_parser("clear", parents=[common], help="remove the item's worktree")
     worktree_clear.add_argument("id")
     worktree_clear.set_defaults(handler=cmd_worktree_clear)
+
+    guidance_verb = verbs.add_parser("guidance", parents=[common],
+                                     help="print a site's own guidance for a trk skill (nothing when it has none)")
+    guidance_verb.add_argument("skill", help="trk, trk-drive-program or trk-create-program")
+    guidance_verb.add_argument("--path", action="store_true", help="print the guidance file's path instead")
+    guidance_verb.set_defaults(handler=cmd_guidance)
 
     where_verb = verbs.add_parser("where", parents=[common], help="which items record the tree holding a path")
     where_verb.add_argument("path")
@@ -1121,6 +1127,16 @@ def cmd_worktree_set(args):
 
 def cmd_worktree_clear(args):
     _write_item(args, lambda tx: worktrees.clear(tx, args.id))
+
+
+def cmd_guidance(args):
+    found = guidance.read(args.skill)
+    if args.json:
+        _print_json({"schema": 1, **found})
+    elif args.path:
+        print(found["path"])
+    elif found["text"] is not None:
+        sys.stdout.write(found["text"])
 
 
 def cmd_where(args):

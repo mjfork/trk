@@ -163,7 +163,8 @@ def test_differing_skill_is_refused_without_force_and_replaced_with_it(box):
     assert "will be replaced" in dry_force.stdout and snapshot(box.home) == before
     box("--force")
     assert skill.read_bytes() == (REPO / "skills/trk/SKILL.md").read_bytes()
-    assert any(p.read_text() == "local edits\n" for p in (box.home / ".claude/skills").glob("trk.bak-*/SKILL.md"))
+    assert any(p.read_text() == "local edits\n" for p in (box.home / ".local/share/trk-skill-backups").glob("trk.*/SKILL.md"))
+    assert not list((box.home / ".claude/skills").glob("*bak*"))  # aq UP-0001: no backup loads as a skill
 
 
 def test_uninstall_leaves_an_edited_skill_alone(box):

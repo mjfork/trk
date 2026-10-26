@@ -284,8 +284,10 @@ def record(tx, raw_id, sha=None, base=None, repo=None, notes=None):
         if repo is None:
             raise refused("sha-unverifiable", f"{item_id} has no repo that is a local git checkout (nor has any"
                           " ancestor); add one with `trk edit --add-repo`, or pass --repo", item=item_id)
-    if gitrepo.resolve(repo, sha) is None:
+    full = gitrepo.resolve(repo, sha)
+    if full is None:
         raise refused("sha-unverifiable", f"{sha} names no commit in {repo}", item=item_id)
+    sha = full  # stored in full, so a RED-read ask's `red_read.sha` meets its contract
     if gitrepo.read_file(repo, sha, RULES_FILE) is None:
         raise refused("no-blast-rules", f"{repo} has no {RULES_FILE} at {sha}: without it every change would rate "
                       f"GREEN and merge unreviewed; commit one (rules, or only a `#` comment line for a repo that "
@@ -807,7 +809,9 @@ def red_read_json(conn, ask):
     there are none), with the actor and session of the section's latest write. `current` is whether that
     rating counts at the ticket's head now: after a newer `pr` row and before a re-rating, or after a
     `reopen-stage`, the ask stays open and keeps the last RED rating with `current` false, so a client shows
-    the card without Approve. None for any other ask, a closed one, or a ticket with no RED rating."""
+    the card without Approve. `sha` is always in full: a rating stored short (before trk stored them in full) is
+    resolved in the ticket's checkout. None for any other ask, a closed one, a ticket with no RED rating, or a short
+    rating no checkout resolves."""
     if ask["status"] != "open" or not ask["title"].startswith(RED_ASK_TITLE):
         return None
     from . import items
@@ -822,11 +826,17 @@ def red_read_json(conn, ask):
         return None
     from . import sections
 
+    sha = rated["sha"]
+    if len(sha) < 40:  # a row rated before shas were stored in full
+        repo = weighing.repo.get(sha)
+        sha = gitrepo.resolve(repo, sha) if repo is not None else None
+        if sha is None:
+            return None  # no checkout names it in full: the ask shows without its RED card
     text = sections.body(conn, row["id"], BRIEF_HANDLE)
     bodies = brief_bodies(text)
     lacking = [h for h in BRIEF_HEADINGS if h not in bodies]
     writer = brief_writer(conn, row["id"]) if text is not None else None
-    return {"ticket": row["id"], "sha": rated["sha"], "current": bool(rated["counts"]), "roles": list(red_roles(detail)),
+    return {"ticket": row["id"], "sha": sha, "current": bool(rated["counts"]), "roles": list(red_roles(detail)),
             "files_count": colour_counts(detail)["red"],
             "brief": {key: bodies.get(h) for h, key in BRIEF_KEYS.items()},
             "brief_lacking": lacking, "brief_complete": not lacking,

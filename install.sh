@@ -28,7 +28,7 @@ Options:
   --uninstall     remove what install.sh added; the store is never touched
   --no-editable   install a copy of trk, not a link to this checkout
   --force         reinstall the trk command even if uv already has it, and replace skills that
-                  differ from the repo copy (the old ones are kept as <name>.bak-<time>)
+                  differ from the repo copy (the old ones are kept as ~/.local/share/trk-skill-backups/)
   --pages         also install and enable the page publisher's systemd user timer
   --me NAME       the person's actor id for a new store (default: your user name)
   -h, --help      show this help
@@ -69,6 +69,8 @@ done
 [[ $MODE == bundle ]] || ((! ALL_BRANCHES)) || die "--all-branches goes with make-bundle"
 
 CLAUDE_DIR=$HOME/.claude
+# Replaced skills are kept outside every folder Claude Code loads skills from, so a backup never loads as a skill.
+SKILL_BACKUPS=${XDG_DATA_HOME:-$HOME/.local/share}/trk-skill-backups
 SETTINGS=$CLAUDE_DIR/settings.json
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 STORE=${TRK_HOME:-$HOME/.local/share/trk}
@@ -119,7 +121,7 @@ check_skills() { # refuse to overwrite a skill that differs from the repo copy, 
     diff -rq "$REPO/skills/$s" "$CLAUDE_DIR/skills/$s" | sed 's/^/  /' || true
   done
   if ((FORCE)); then
-    say "--force given: these will be replaced; the old copies are kept as <name>.bak-<time>"
+    say "--force given: these will be replaced; the old copies are kept in $SKILL_BACKUPS"
   elif ((DRY)); then
     say "[dry-run] a real run would refuse here; add --force to replace them"
   else
@@ -138,11 +140,21 @@ install_skills() {
       absent) say "skill $s: installing"
         act mkdir -p "$CLAUDE_DIR/skills"
         act cp -R "$REPO/skills/$s" "$CLAUDE_DIR/skills/$s" ;;
-      differs) say "skill $s: replacing; keeping the old one as $s.bak-$stamp"
-        act mv "$CLAUDE_DIR/skills/$s" "$CLAUDE_DIR/skills/$s.bak-$stamp"
+      differs) say "skill $s: replacing; keeping the old one as $SKILL_BACKUPS/$s.$stamp"
+        act mkdir -p "$SKILL_BACKUPS"
+        act mv "$CLAUDE_DIR/skills/$s" "$SKILL_BACKUPS/$s.$stamp"
         act cp -R "$REPO/skills/$s" "$CLAUDE_DIR/skills/$s" ;;
     esac
   done
+}
+
+report_guidance() { # read-only: a site's own rules for each skill, which install never writes
+  local s f
+  f=${TRK_GUIDANCE_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/trk/guidance}
+  for s in ${SKILLS[@]+"${SKILLS[@]}"}; do
+    [[ -f $f/$s.md ]] && say "guidance: $s present ($(wc -c <"$f/$s.md" | tr -d ' ') B, $f/$s.md)"
+  done
+  return 0
 }
 
 uninstall_skills() {
@@ -316,6 +328,7 @@ check_skills
 install_tool
 if ((DRY)) && ! command -v trk >/dev/null; then say "== store"; say "[dry-run] would run trk init if no store exists at $STORE"; else install_store; fi
 install_skills
+report_guidance
 say "== hooks"
 settings_cmd add
 ((PAGES)) && install_units

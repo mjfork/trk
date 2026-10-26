@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trk.local/contract/guidance.schema.json",
+  "title": "trk guidance --json",
+  "description": "The response of `trk guidance <skill> --json`: a site's own guidance for one trk skill, read from `${TRK_GUIDANCE_DIR:-${XDG_CONFIG_HOME:-~/.config}/trk/guidance}/<skill>.md`. No file is the normal case (`present` false), not an error. A skill that is not trk's, or a file that is unreadable, not UTF-8 or over 64 KiB, exits 2. Additional fields are allowed.",
+  "type": "object",
+  "required": ["schema", "skill", "path", "present", "bytes", "sha256", "text"],
+  "properties": {
+    "schema": {"const": 1},
+    "skill": {"enum": ["trk", "trk-drive-program", "trk-create-program"]},
+    "path": {"type": "string", "description": "The resolved file path, whether or not it exists."},
+    "present": {"type": "boolean"},
+    "bytes": {"type": "integer", "minimum": 0, "maximum": 65536},
+    "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "Of the file's bytes; null when absent."},
+    "text": {"type": ["string", "null"], "description": "The file's text, unchanged; null when absent."}
+  }
+}

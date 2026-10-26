@@ -205,7 +205,7 @@ trk works without Claude Code, but it is built for it. The package adds three pa
 - `trk-drive-program` teaches one session to drive a whole program: pick the next work, hand it to worker sessions, check what comes back.
 - `trk-create-program` teaches a session to chart a new program with you, one question at a time.
 
-The files in `skills/` are the source of truth. Edit them there, then run `./install.sh` again to copy them. If you edited an installed copy, the installer refuses to overwrite it unless you pass `--force`; then it keeps your copy aside as `<name>.bak-<time>`.
+The files in `skills/` are the source of truth. Edit them there, then run `./install.sh` again to copy them. If you edited an installed copy, the installer refuses to overwrite it unless you pass `--force`; then it keeps your copy aside as `~/.local/share/trk-skill-backups/<name>.<time>`, outside the skills folder so it never loads as a second skill. A site's own rules for a skill don't go in the installed copy: put them in the file `trk guidance <skill> --path` names (`~/.config/trk/guidance/<skill>.md`), and each skill tells the agent to read it with `trk guidance <skill>`. Site guidance may add and narrow rules, never loosen them or override a refusal.
 
 **Hooks.** A hook is a script Claude Code runs on an event. Two scripts in `hooks/` serve trk:
 

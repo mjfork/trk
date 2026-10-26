@@ -198,6 +198,19 @@ def test_an_open_ask_on_the_ticket_does_not_stop_a_fresh_session_claiming_or_wri
     ok(trk, *WRITES["pr"](t), *as_(X))
 
 
+def test_the_same_session_reclaims_after_its_lease_lapsed_beside_an_ask_on_the_ticket(trk, world, tmp_path, monkeypatch):
+    """UP-0010's exact shape: the builder's lease lapses (not released) while an ask is opened on the claimed ticket
+    itself; the same session's re-claim is granted, not refused `not-ready: open-ask`."""
+    t = new_ticket(trk, world)
+    monkeypatch.setenv("TRK_NOW", "2026-10-24T10:00:00.000Z")
+    ok(trk, "claim", t, *as_(W))
+    ask_on(trk, tmp_path, t)
+    monkeypatch.setenv("TRK_NOW", "2026-10-24T12:00:00.000Z")       # past the lease: lapsed, never released
+    assert refusal(trk, *WRITES["ledger"](t), *as_(W))["rule"] == "not-claimed"
+    ok(trk, "claim", t, *as_(W))
+    ok(trk, *WRITES["ledger"](t), *as_(W))
+
+
 def test_a_blocker_still_refuses_the_claim_beside_an_open_ask(trk, world, tmp_path):
     t, blocker = new_ticket(trk, world), new_ticket(trk, world, "B")
     ok(trk, "link", blocker, "blocks", t)

@@ -195,3 +195,7 @@ _Avoid_: Depends on
 **Supersedes**:
 An edge meaning one item replaces another; closing the replaced item moves what it blocked onto its replacement.
 _Avoid_: Replaces, obsoletes
+
+**Site guidance**:
+A site's own rules for one trk skill, in a markdown file outside the release (`trk guidance <skill> --path` names it). Each skill tells the agent to read it. The order is trk's refusals and gates, then the release skill, then site guidance: site guidance may add rules and narrow them, never loosen or override them. trk only prints it; no decision reads it.
+_Avoid_: Local skill, skill override, patch

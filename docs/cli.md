@@ -68,8 +68,8 @@ options:
 ```text
 usage: trk ask [-h] [--as ACTOR] [--session SESSION] [--json] --to ROLE
                [--question @FILE|-] [--urgent] [--option LABEL]
-               [--recommend N] [--ledger N] [--first | --last | --before ID |
-               --after ID]
+               [--recommend N] [--ledger N]
+               [--first | --last | --before ID | --after ID]
                ID title
 
 positional arguments:
@@ -142,8 +142,8 @@ options:
 
 ```text
 usage: trk answer [-h] [--as ACTOR] [--session SESSION] [--json]
-                  [--outcome TEXT|@FILE|-] [--option N] [--answer @FILE|- |
-                  --from-comment COMMENT]
+                  [--outcome TEXT|@FILE|-] [--option N]
+                  [--answer @FILE|- | --from-comment COMMENT]
                   id
 
 positional arguments:
@@ -186,8 +186,8 @@ options:
 ## trk withdraw
 
 ```text
-usage: trk withdraw [-h] [--as ACTOR] [--session SESSION] [--json]
-                    --reason TEXT|@FILE|-
+usage: trk withdraw [-h] [--as ACTOR] [--session SESSION] [--json] --reason
+                    TEXT|@FILE|-
                     id
 
 positional arguments:
@@ -207,8 +207,8 @@ options:
 ```text
 usage: trk edit [-h] [--as ACTOR] [--session SESSION] [--json] [--title TITLE]
                 [--owner ACTOR | --no-owner] [--client NAME|none]
-                [--archive PATH|none] [--urgent | --no-urgent] [--jira URL |
-                --no-jira] [--add-repo R] [--remove-repo R]
+                [--archive PATH|none] [--urgent | --no-urgent]
+                [--jira URL | --no-jira] [--add-repo R] [--remove-repo R]
                 id
 
 positional arguments:
@@ -265,8 +265,9 @@ options:
 ## trk move
 
 ```text
-usage: trk move [-h] [--as ACTOR] [--session SESSION] [--json] [--parent ID |
-                --top] [--first | --last | --before ID | --after ID]
+usage: trk move [-h] [--as ACTOR] [--session SESSION] [--json]
+                [--parent ID | --top]
+                [--first | --last | --before ID | --after ID]
                 id
 
 positional arguments:
@@ -288,9 +289,9 @@ options:
 ## trk close
 
 ```text
-usage: trk close [-h] [--as ACTOR] [--session SESSION] [--json]
-                 --resolution {done,wont-do,superseded,out-of-scope,duplicate}
-                 --outcome TEXT|@FILE|- [--by ID] [--of ID]
+usage: trk close [-h] [--as ACTOR] [--session SESSION] [--json] --resolution
+                 {done,wont-do,superseded,out-of-scope,duplicate} --outcome
+                 TEXT|@FILE|- [--by ID] [--of ID]
                  id
 
 positional arguments:
@@ -554,8 +555,8 @@ options:
 ## trk actor add
 
 ```text
-usage: trk actor add [-h] [--as ACTOR] [--session SESSION] [--json]
-                     --kind {human,agent} [--display DISPLAY]
+usage: trk actor add [-h] [--as ACTOR] [--session SESSION] [--json] --kind
+                     {human,agent} [--display DISPLAY]
                      id
 
 positional arguments:
@@ -573,8 +574,8 @@ options:
 ## trk actor edit
 
 ```text
-usage: trk actor edit [-h] [--as ACTOR] [--session SESSION] [--json]
-                      --display DISPLAY
+usage: trk actor edit [-h] [--as ACTOR] [--session SESSION] [--json] --display
+                      DISPLAY
                       id
 
 positional arguments:
@@ -697,8 +698,8 @@ options:
 ## trk worktree set
 
 ```text
-usage: trk worktree set [-h] [--as ACTOR] [--session SESSION] [--json]
-                        --path P [--branch B]
+usage: trk worktree set [-h] [--as ACTOR] [--session SESSION] [--json] --path
+                        P [--branch B]
                         id
 
 positional arguments:
@@ -728,6 +729,23 @@ options:
   --as ACTOR         writing actor
   --session SESSION  writing session id
   --json             print JSON
+```
+
+## trk guidance
+
+```text
+usage: trk guidance [-h] [--as ACTOR] [--session SESSION] [--json] [--path]
+                    skill
+
+positional arguments:
+  skill              trk, trk-drive-program or trk-create-program
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR         writing actor
+  --session SESSION  writing session id
+  --json             print JSON
+  --path             print the guidance file's path instead
 ```
 
 ## trk where
@@ -895,8 +913,8 @@ options:
 ## trk comment reply
 
 ```text
-usage: trk comment reply [-h] [--as ACTOR] [--session SESSION] [--json]
-                         --body @file|-
+usage: trk comment reply [-h] [--as ACTOR] [--session SESSION] [--json] --body
+                         @file|-
                          COMMENT
 
 positional arguments:
@@ -1153,10 +1171,10 @@ See also `trk evidence add` and `trk evidence retract`.
 ## trk evidence add
 
 ```text
-usage: trk evidence add [-h] [--as ACTOR] [--session SESSION] [--json]
-                        --kind K --gate G [--criterion ac-N] [--ref R]
-                        [--sha S] [--verdict {pass,fail}] [--red-first]
-                        --note TEXT|@FILE|-
+usage: trk evidence add [-h] [--as ACTOR] [--session SESSION] [--json] --kind
+                        K --gate G [--criterion ac-N] [--ref R] [--sha S]
+                        [--verdict {pass,fail}] [--red-first] --note
+                        TEXT|@FILE|-
                         id
 
 positional arguments:
@@ -1205,7 +1223,8 @@ options:
 
 ```text
 usage: trk pages [-h] [--json] [--dirty] [--errors]
-                 {setup,flush,pull,authors,reply,tidy,status,tick,timer,render,republish} ...
+                 {setup,flush,pull,authors,reply,tidy,status,tick,timer,render,republish}
+                 ...
 
 positional arguments:
   {setup,flush,pull,authors,reply,tidy,status,tick,timer,render,republish}
@@ -1538,8 +1557,8 @@ options:
 ## trk ledger audit
 
 ```text
-usage: trk ledger audit [-h] [--as ACTOR] [--session SESSION] [--json]
-                        --note TEXT|@FILE|-
+usage: trk ledger audit [-h] [--as ACTOR] [--session SESSION] [--json] --note
+                        TEXT|@FILE|-
                         id
 
 positional arguments:
@@ -1576,8 +1595,8 @@ options:
 ## trk ledger promote
 
 ```text
-usage: trk ledger promote [-h] [--as ACTOR] [--session SESSION] [--json]
-                          --adr PATH
+usage: trk ledger promote [-h] [--as ACTOR] [--session SESSION] [--json] --adr
+                          PATH
                           id N
 
 positional arguments:
