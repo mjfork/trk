@@ -62,14 +62,17 @@ def page_handle(handle, kind):
     return f"s-{handle}" if reserved(handle, kind) else handle
 
 
-def render(conn, raw_id):
-    """The page of one item as HTML text. Asks have no page (rule `no-page`)."""
+def render(conn, raw_id, urls=None):
+    """The page of one item as HTML text. Asks have no page (rule `no-page`).
+
+    `urls` replaces the published URLs the page links to (`published_urls`), for a caller that serves the
+    pages itself rather than publishing them."""
     row = items.get(conn, raw_id)
     kind = page_kind(row)
     if kind is None:
         raise refused("no-page", f"{row['id']} is an ask; asks have no page of their own: they show in the waiting "
                                  "boxes and child rows of the pages above them", item=row["id"])
-    return _Page(conn, row, kind).html()
+    return _Page(conn, row, kind, urls).html()
 
 
 def stamp(text):
@@ -104,6 +107,15 @@ def _page_url(url):
     return markdown.safe_url(url)
 
 
+def published_urls(conn):
+    """{page key: URL} for every page the publisher has placed: item ids, `needs-you:<actor>` and `top:`.
+    Every link one page makes to another comes from this map, so a page that is not published yet is
+    named in plain text instead. `trk.serve` passes its own map in place of it, which is how the same
+    templates render for a local server that publishes nothing."""
+    return {row["item_id"]: row["url"] for row in conn.execute(
+        "SELECT item_id, url FROM pages WHERE slug IS NOT NULL AND url IS NOT NULL ORDER BY item_id")}
+
+
 def in_progress(conn, rows, now=None):
     """[(row, live claim or None)] for the rows work has started on, most advanced first: an item of any
     kind with a live claim, or a ticket at Built, Merged or Reviewed (its work exists but is unverified).
@@ -130,13 +142,12 @@ def in_progress(conn, rows, now=None):
 
 
 class _Page:
-    def __init__(self, conn, row, kind):
+    def __init__(self, conn, row, kind, urls=None):
         self.conn = conn
         self.row = row
         self.kind = kind
         self.now = clock.now()
-        self.urls = {r["item_id"]: r["url"] for r in conn.execute(
-            "SELECT item_id, url FROM pages WHERE slug IS NOT NULL AND url IS NOT NULL ORDER BY item_id")}
+        self.urls = published_urls(conn) if urls is None else dict(urls)
         self.names = {r["id"]: r["display"] for r in conn.execute("SELECT id, display FROM actors ORDER BY id")}
 
     # --- small pieces ---

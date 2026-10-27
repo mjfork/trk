@@ -59,9 +59,12 @@ def roots(conn):
     return [row for row in items.children(conn, None, open_only=True) if render.page_kind(row) is not None]
 
 
-def render_page(conn):
-    """The top-level page as HTML text: a pure function of the store, like every page."""
-    return _Top(conn).html()
+def render_page(conn, urls=None):
+    """The top-level page as HTML text: a pure function of the store, like every page.
+
+    `urls` replaces the published URLs the page links to (`render.published_urls`), for a caller that
+    serves the pages itself rather than publishing them."""
+    return _Top(conn, urls).html()
 
 
 CSS = """
@@ -70,12 +73,11 @@ CSS = """
 
 
 class _Top(render._Page):
-    def __init__(self, conn):
+    def __init__(self, conn, urls=None):
         self.conn, self.row, self.kind = conn, None, KIND
         self._below = None  # the open roots and their subtrees, read once (see `below`)
         self.now = clock.now()  # read once, as every render does; nothing on this page shows it
-        self.urls = {r["item_id"]: r["url"] for r in conn.execute(
-            "SELECT item_id, url FROM pages WHERE slug IS NOT NULL AND url IS NOT NULL ORDER BY item_id")}
+        self.urls = render.published_urls(conn) if urls is None else dict(urls)
         self.names = {r["id"]: r["display"] for r in conn.execute("SELECT id, display FROM actors ORDER BY id")}
 
     def html(self):

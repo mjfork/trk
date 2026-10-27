@@ -109,9 +109,12 @@ def addressee_at(conn, row, moment):
     return asks.resolve(conn, row)
 
 
-def render_page(conn, actor_id):
-    """The person's page as HTML text: a pure function of the store, like every page."""
-    return _NeedsYou(conn, actor_id).html()
+def render_page(conn, actor_id, urls=None):
+    """The person's page as HTML text: a pure function of the store, like every page.
+
+    `urls` replaces the published URLs the page links to (`render.published_urls`), for a caller that
+    serves the pages itself rather than publishing them."""
+    return _NeedsYou(conn, actor_id, urls).html()
 
 
 CSS = """
@@ -120,12 +123,11 @@ CSS = """
 
 
 class _NeedsYou(render._Page):
-    def __init__(self, conn, actor_id):
+    def __init__(self, conn, actor_id, urls=None):
         self.actor = actors.get(conn, actor_id)["id"]
         self.conn, self.row, self.kind = conn, None, KIND
         self.now = clock.now()  # the urgency lines and their order are as of this moment
-        self.urls = {r["item_id"]: r["url"] for r in conn.execute(
-            "SELECT item_id, url FROM pages WHERE slug IS NOT NULL AND url IS NOT NULL ORDER BY item_id")}
+        self.urls = render.published_urls(conn) if urls is None else dict(urls)
         self.names = {r["id"]: r["display"] for r in conn.execute("SELECT id, display FROM actors ORDER BY id")}
 
     def html(self):

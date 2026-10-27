@@ -484,6 +484,14 @@ def build_parser():
     pages_render.add_argument("id", help="an item id, or needs-you:<actor> for a person's Needs-you page")
     pages_render.add_argument("--out", metavar="F", default="-", help="write the HTML to F (default -: stdout)")
     pages_render.set_defaults(handler=cmd_pages_render)
+    pages_serve = pages_verbs.add_parser("serve", parents=[common],
+                                         help="browse these pages locally: a read-only web server on "
+                                              "127.0.0.1 that renders each page as it is asked for "
+                                              "(publishing is not needed and is not touched)")
+    # The literal is `serve.DEFAULT_PORT`, spelled here so building the parser does not import the
+    # server; test_serve ties the two together.
+    pages_serve.add_argument("--port", type=int, default=8795, metavar="N", help="the loopback port")
+    pages_serve.set_defaults(handler=cmd_pages_serve)
     pages_republish = pages_verbs.add_parser("republish", parents=[common],
                                              help="send an item's whole page again, ignoring the stored hashes (repair)")
     pages_republish.add_argument("id", help="an item id, or needs-you:<actor>")
@@ -1723,6 +1731,12 @@ def cmd_pages_render(args):
                      "bytes": len(page.encode("utf-8")), **({"html": page} if args.out == "-" else {})})
     elif args.out == "-":
         sys.stdout.write(page)
+
+
+def cmd_pages_serve(args):
+    from . import serve  # the server loads only for this verb, like the page modules
+
+    serve.serve(port=args.port)
 
 
 def cmd_ledger_add(args):

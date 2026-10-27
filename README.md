@@ -19,6 +19,7 @@ trk is a CLI first. It also ships Claude Code skills that teach an agent the rul
 - [Concepts](#concepts)
 - [Using trk with Claude Code](#using-trk-with-claude-code)
 - [Using trk with herdr (optional)](#using-trk-with-herdr-optional)
+- [Browsing the pages locally](#browsing-the-pages-locally)
 - [Publishing pages (optional)](#publishing-pages-optional)
 - [The store is machine-wide](#the-store-is-machine-wide)
 - [Upgrading](#upgrading)
@@ -221,9 +222,17 @@ herdr is a terminal multiplexer for coding agents. A herdr plugin can read trk's
 
 You do not need herdr. Anything that can run `trk` and read JSON can drive the same flow. Parts of the skills mention herdr as one example of how to start and message worker sessions. Treat those parts as optional.
 
+## Browsing the pages locally
+
+```bash
+trk pages serve          # then open http://127.0.0.1:8795/
+```
+
+A read-only web server on loopback that renders each page as you ask for it: the top-level page at `/`, an item at `/<id>`, a person at `/needs-you/<actor>`. It needs no publishing setup, writes nothing to the store, opens no port on the network and runs in the foreground, so Ctrl-C stops it and nothing is left behind. `--port N` picks another port. To read another machine's tracker, forward the port over ssh: `ssh -N -L 8795:127.0.0.1:8795 <host>`.
+
 ## Publishing pages (optional)
 
-trk can publish each item as a web page, with a table of its children, its open asks and its evidence. Without publishing, trk works fully and shows "not set up" when you ask about pages. `trk pages render <id>` prints any page's HTML whether publishing is set up or not.
+trk can publish each item as a web page, with a table of its children, its open asks and its evidence. Without publishing, trk works fully and shows "not set up" when you ask about pages. `trk pages render <id>` prints any page's HTML whether publishing is set up or not, and `trk pages serve` browses them all without publishing anything.
 
 Pages go through a page adapter, a program trk runs for each call ([docs/adapters.md](docs/adapters.md)):
 

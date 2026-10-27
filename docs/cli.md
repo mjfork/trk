@@ -1228,11 +1228,11 @@ options:
 
 ```text
 usage: trk pages [-h] [--json] [--dirty] [--errors]
-                 {setup,flush,pull,authors,reply,tidy,status,tick,timer,render,republish}
+                 {setup,flush,pull,authors,reply,tidy,status,tick,timer,render,serve,republish}
                  ...
 
 positional arguments:
-  {setup,flush,pull,authors,reply,tidy,status,tick,timer,render,republish}
+  {setup,flush,pull,authors,reply,tidy,status,tick,timer,render,serve,republish}
     setup               configure publishing and check the page adapter (trk
                         stores no secret)
     flush               publish due pages
@@ -1250,6 +1250,9 @@ positional arguments:
     timer               the timer that runs `trk pages tick` every minute (a
                         systemd user timer; a launchd agent on macOS)
     render              render one item's page locally, without network
+    serve               browse these pages locally: a read-only web server on
+                        127.0.0.1 that renders each page as it is asked for
+                        (publishing is not needed and is not touched)
     republish           send an item's whole page again, ignoring the stored
                         hashes (repair)
 
@@ -1415,6 +1418,20 @@ options:
   --session SESSION  writing session id
   --json             print JSON
   --out F            write the HTML to F (default -: stdout)
+```
+
+## trk pages serve
+
+```text
+usage: trk pages serve [-h] [--as ACTOR] [--session SESSION] [--json]
+                       [--port N]
+
+options:
+  -h, --help         show this help message and exit
+  --as ACTOR         writing actor
+  --session SESSION  writing session id
+  --json             print JSON
+  --port N           the loopback port
 ```
 
 ## trk pages republish

@@ -14,6 +14,20 @@ This page covers the jobs that come after install: publishing pages, the timer, 
 
 The store is machine-wide. Every project and session on the machine shares it. Never copy, edit or delete `store.db` by hand while trk is in use. Use `trk backup` and `trk restore`.
 
+## Browsing pages locally
+
+`trk pages serve` serves every page read-only on `http://127.0.0.1:8795/`, rendering each one from the store as it stands when you ask for it. It is separate from publishing: it needs no adapter, runs on a store where `trk pages setup` has never run, changes nothing about what is published, and writes nothing (its connection is `query_only`).
+
+```bash
+trk pages serve                 # Ctrl-C stops it
+trk pages serve --port 9100     # another port
+```
+
+- `/` is the top-level page, `/<item id>` an item's page (closed ones too), `/needs-you/<actor>` a person's page.
+- It binds `127.0.0.1` only, so nothing on the network can reach it, and it runs in the foreground: no service, no timer, nothing left behind.
+- To read another machine's tracker, forward the port and browse it at home: `ssh -N -L 8795:127.0.0.1:8795 <host>`, with `trk pages serve` running in a shell on that host. Links follow the port you forwarded to.
+- Pages are rendered per request, so they are never stale. Lapsed leases still read as live until `trk sweep` ends them, exactly as on a published page.
+
 ## Publishing setup
 
 Publishing is optional. trk writes pages through a **page adapter**, a program it runs once per call. [adapters.md](adapters.md) is the protocol.
