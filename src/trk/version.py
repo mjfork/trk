@@ -8,10 +8,14 @@ started, and nothing is ever written into the working tree. `dirty` says whether
 changes **when it was built**, not now (added 2026-10-27, for an installer that skips a reinstall already at
 its pinned commit)."""
 
+import re
 import subprocess
 from importlib.metadata import PackageNotFoundError, version as dist_version
+from pathlib import Path
 
 from . import store
+
+SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def report():
@@ -28,13 +32,33 @@ def report():
 
 
 def provenance(tree):
-    """(commit, dirty) for the source `tree`: its live checkout when it sits in one, else the record the
-    build hook put in the wheel this copy came from, else (None, None). Live wins, so a record that somehow
-    sits in a checkout never speaks for it."""
-    sha = _commit(tree)
-    if sha is not None:
-        return sha, _dirty(tree)
+    """(commit, dirty) for the source `tree`: its own checkout when it is one, else the record the build
+    hook put in the wheel this copy came from, else (None, None). Live wins over the record, so a record
+    that somehow sits in a checkout never speaks for it."""
+    root = _checkout_root(tree)
+    if root is not None:
+        sha = _commit(root)
+        if sha is not None:
+            return sha, _dirty(root)
     return _build_record()
+
+
+def _checkout_root(tree):
+    """The checkout `tree` is the `src` of, or None when `tree` is not one. An editable install imports
+    from `<root>/src`, so the repository's top level must be `tree`'s parent.
+
+    A repository that merely *contains* this copy is some other project and its HEAD says nothing about
+    this trk: an installed copy under a `$HOME` that is a dotfiles repo would otherwise report the
+    dotfiles commit, and its dirty state, instead of the commit baked into its wheel. This is the mirror
+    of the same guard `hatch_build.head` applies at build time (found by an audit of 7002060, 2026-10-27).
+    """
+    top = _git(tree, "rev-parse", "--show-toplevel")
+    if top is None:
+        return None
+    try:
+        return Path(top) if Path(top).resolve() == Path(tree).parent.resolve() else None
+    except OSError:
+        return None
 
 
 def text(reply):
@@ -63,27 +87,29 @@ def _build_record():
     except ImportError:
         return None, None
     sha = getattr(_build, "COMMIT", None)
-    if not isinstance(sha, str) or len(sha) != 40:
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
         return None, None
     return sha, bool(getattr(_build, "DIRTY", False))
 
 
-def _dirty(tree):
-    """Whether the checkout `tree` sits in has uncommitted changes; None when git cannot say."""
+def _dirty(root):
+    """Whether the checkout at `root` has uncommitted changes; None when git cannot say. Untracked files
+    count: a tree carrying source nobody has committed is not clean."""
+    answer = _git(root, "status", "--porcelain")
+    return None if answer is None else bool(answer)
+
+
+def _commit(root):
+    """HEAD of the checkout at `root`; None when git is missing or cannot say."""
+    sha = _git(root, "rev-parse", "HEAD")
+    return sha if sha is not None and SHA.fullmatch(sha) else None
+
+
+def _git(root, *args):
+    """A git command's output at `root`, stripped, or None when git is missing or the command failed."""
     try:
-        done = subprocess.run(["git", "-C", str(tree), "status", "--porcelain"], capture_output=True, text=True,
+        done = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
                               encoding="utf-8", errors="replace", check=False, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
-    return bool(done.stdout.strip()) if done.returncode == 0 else None
-
-
-def _commit(tree):
-    """HEAD of the checkout `tree` sits in; None when git is missing or `tree` is not in a checkout."""
-    try:
-        done = subprocess.run(["git", "-C", str(tree), "rev-parse", "HEAD"], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", check=False, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    sha = done.stdout.strip()
-    return sha if done.returncode == 0 and len(sha) == 40 else None
+    return done.stdout.strip() if done.returncode == 0 else None

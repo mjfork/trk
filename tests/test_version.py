@@ -198,6 +198,40 @@ def test_a_record_that_names_no_sha_is_ignored(tmp_path, tools, body):
     assert version_json(package, UV_TOOL_DIR=str(tools))["commit"] is None
 
 
+def surrounded(tmp_path, with_stamp=True):
+    """A copy of the package living *inside* someone else's checkout, as an installed copy does when the
+    uv tool directory sits under a `$HOME` that is itself a git repo. Returns (package dir, that repo)."""
+    outer = tmp_path / "dotfiles"
+    package = copied_package(outer / "lib" / "site-packages")
+    if with_stamp:
+        build_record(package, flag=False)
+    git = ["git", "-C", str(outer), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    (outer / "README.md").write_text("someone else's project\n")
+    subprocess.run([*git, "add", "README.md"], check=True)
+    subprocess.run([*git, "commit", "-qm", "an unrelated project"], check=True)
+    return package, outer
+
+
+def test_a_copy_inside_an_unrelated_repo_reports_its_own_stamp(tmp_path, tools):
+    """The repo around an installed copy is some other project: its HEAD says nothing about this trk, and
+    must not shadow the stamp the wheel carries (found by an audit of 7002060)."""
+    package, outer = surrounded(tmp_path)
+
+    reply = version_json(package, UV_TOOL_DIR=str(tools))
+
+    assert reply["commit"] == RECORDED != head(outer), "the surrounding repo's HEAD was reported"
+    assert reply["dirty"] is False, "nor its dirty state"
+
+
+def test_a_copy_inside_an_unrelated_repo_and_no_stamp_knows_nothing(tmp_path, tools):
+    package, outer = surrounded(tmp_path, with_stamp=False)
+
+    reply = version_json(package, UV_TOOL_DIR=str(tools))
+
+    assert (reply["commit"], reply["dirty"]) == (None, None), f"it spoke for {head(outer)}"
+
+
 def test_a_checkout_answers_live_even_with_a_record_in_it(tmp_path, tools):
     """A record left in a tree by an earlier `--no-editable` install never speaks for that tree: the
     working tree's own HEAD does, which is what an editable install must report."""
