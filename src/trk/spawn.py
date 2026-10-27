@@ -89,7 +89,10 @@ def is_flusher(pid):
     that hung — is still trusted, as it was before. Answering `False` there would be the safer
     direction for publishing, since a redundant flusher exits as soon as it finds the registered one,
     but on a box with no working `ps` it would fork one on every write; that trade is why the doubt
-    stays on the trusting side."""
+    stays on the trusting side.
+
+    A pid that exists but has not reached its exec yet still reports the command line of whatever
+    forked it, so it reads `False` here. That is the safe direction, and `launch` says what it costs."""
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
             argv = [part.decode("utf-8", "replace") for part in f.read().split(b"\0") if part]
@@ -126,7 +129,13 @@ def command():
 def launch(directory):
     """Start `trk pages flush --wait` detached: its own session, stdin from /dev/null, stdout and
     stderr appended to flusher.log. Records the child in flusher.pid (it registers again as itself)
-    and returns without waiting."""
+    and returns without waiting.
+
+    So between this `Popen` and the child's exec the recorded pid still reports *this* process's
+    command line, and a marking write committing inside that window reads it as no flusher and starts
+    a second one. That costs a process, not correctness: the second registers through `flusher.lock`,
+    finds the first and exits at once, exactly as two racing writes already leave one running. Waiting
+    for the exec here would make every spawning write pay for it, which is the trade this keeps."""
     import subprocess
 
     log = directory / LOG_NAME

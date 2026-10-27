@@ -78,13 +78,32 @@ def write_lock_free(trk_home):
         conn.close()
 
 
-@pytest.fixture
-def stand_in():
-    """A live process whose command line reads `… pages flush --wait`, as a running flusher's does."""
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", *spawn.FLUSH_WAIT])
-    yield proc
+def start_stand_in():
+    """A live process whose command line reads `… pages flush --wait`, as a running flusher's does,
+    returned only once it has exec'd.
+
+    `Popen` returns as soon as the child exists, which is before it replaces its image: until the exec
+    the pid still reports the *parent's* command line, through `/proc/<pid>/cmdline` as much as through
+    `ps`, so a check made inside that window reads False. The child writes "up" after the exec, and
+    reading that line is the proof the window has passed. Waiting matters here because the check runs
+    with nothing in between; the tests that spawn a whole `trk` process in between never noticed."""
+    code = "import sys, time; sys.stdout.write('up\\n'); sys.stdout.flush(); time.sleep(120)"
+    proc = subprocess.Popen([sys.executable, "-c", code, *spawn.FLUSH_WAIT], stdout=subprocess.PIPE)
+    assert proc.stdout.readline().strip() == b"up", "the stand-in never reached its exec"
+    return proc
+
+
+def stop_stand_in(proc):
     proc.kill()
     proc.wait()
+    proc.stdout.close()
+
+
+@pytest.fixture
+def stand_in():
+    proc = start_stand_in()
+    yield proc
+    stop_stand_in(proc)
 
 
 # ----- AC 1 and AC 2: the spawn check -----------------------------------------------------------------
@@ -125,12 +144,11 @@ def test_a_live_process_that_is_not_a_flusher_is_not_taken_for_one():
     such a pid used to be trusted, which suppressed every spawn until the file was removed (Michael
     asked for this on 2026-10-27, after it failed the stale-pid test above on macOS)."""
     assert spawn.is_flusher(os.getpid()) is False  # this test process is alive and is not a flusher
-    running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", *spawn.FLUSH_WAIT])
+    running = start_stand_in()  # exec'd, so its command line is its own (see `start_stand_in`)
     try:
         assert spawn.is_flusher(running.pid) is True
     finally:
-        running.terminate()
-        running.wait()
+        stop_stand_in(running)
 
 
 def test_claim_renew_never_spawns(trk, trk_home, live, spawned, monkeypatch):
