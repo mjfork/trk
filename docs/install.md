@@ -49,6 +49,7 @@ The script runs `uv tool install --editable <checkout>`. uv builds an isolated e
 - `--no-editable` installs a copy. Updating then needs `./install.sh --force --no-editable`.
 - If uv already has trk, the script leaves it alone. `--force` reinstalls.
 - When the script installs the command, it records that in `~/.local/state/trk-install/tool-installed`. `--uninstall` removes the command only if that file exists, so it never removes a trk you installed yourself.
+- A `--no-editable` build stamps itself: `hatch_build.py`, a hatchling build hook, writes the checkout's commit into the wheel as `trk/_build.py`. It writes nothing into your tree, and it stamps any build of the wheel, not only one this script starts. `trk --version` reads that stamp when the running trk is a copy with no checkout around it; an editable install reads its checkout live instead, so it always reports the working tree. `trk --version --json` carries `commit` (the full sha, `null` when the copy was not built from a checkout) and `dirty` (whether that source had uncommitted changes **when it was built** — it is not a live check). An installer can compare `commit` with the commit it pinned and skip a reinstall that is already at it.
 
 If `trk` is not found afterwards, run `uv tool update-shell` and open a new terminal.
 
