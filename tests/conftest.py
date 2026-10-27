@@ -18,6 +18,7 @@ def trk_home(tmp_path, monkeypatch, request):
     monkeypatch.setenv("TRK_HOME", str(home))
     monkeypatch.setenv("TRK_TEST", "1")
     monkeypatch.setenv("TRK_GH", str(tmp_path / "no-gh-installed"))  # `gh` is never the real one; see test_blast_stale_base
+    monkeypatch.setenv("TRK_AZ", str(tmp_path / "no-az-installed"))  # nor `az`; see test_blast_azure
     for var in ("TRK_ACTOR", "TRK_SESSION", "TRK_NOW", "TRK_BUSY_TIMEOUT_MS", "CLAUDECODE"):  # the suite runs inside agent sessions too
         monkeypatch.delenv(var, raising=False)
     yield home

@@ -12,7 +12,7 @@ import json
 import os
 import re
 
-from . import actors, claims, evidence, github, gitrepo, ledger, stages
+from . import actors, azure, claims, evidence, github, gitrepo, ledger, stages
 from .errors import TrkError, refused, usage
 
 RULES_FILE = ".trk/blast-radius"
@@ -344,32 +344,44 @@ def record(tx, raw_id, sha=None, base=None, repo=None, notes=None):
 
 
 def pull_request(weighing, repo, item_id, sha, notes):
-    """What `gh` says of the ticket's pull request ({"ref", "base", "files"}, see `github.view`), when its
-    latest counting `pr` row names one. Its `files` are None, with a note, when the PR's head is neither the rated
-    `sha` nor a descendant of it (an older head of a ticket with several PRs, or a force-push): the PR's list is
-    then not the list of what is rated. None when the ref is not a GitHub pull request (a branch, `none`), or
-    `gh` is not installed (a note says the PR was not checked); rule `sha-unverifiable` when `gh` cannot read it. `listed`
-    is the PR's file list whatever the head, for a late rating, whose rated sha is past it (`judged_files`)."""
+    """What the code host says of the ticket's pull request ({"ref", "base", "files", "head", "listed", "tool"}, see
+    `github.view` and `azure.view`), when its latest counting `pr` row names one: `gh` for a GitHub PR, `az` for an
+    Azure DevOps PR (its link, or a number in a checkout whose origin is on Azure DevOps). Its `files` are None, with
+    a note, when the PR's head is neither the rated `sha` nor a descendant of it (an older head of a ticket with several
+    PRs, or a force-push): the PR's list is then not the list of what is rated; an Azure PR's are always None (its CLI
+    lists no files). None when the ref is not a pull request (a branch, `none`), or the tool is not installed (a note
+    says the PR was not checked); rule `sha-unverifiable` when the tool cannot read it. `listed` is the PR's file list
+    whatever the head, for a late rating, whose rated sha is past it (`judged_files`)."""
     pr = weighing.latest(("pr",), "built")
-    if pr is None or not github.is_pr_ref(pr["ref"]):
+    if pr is None:
+        return None
+    if azure.is_pr_ref(repo, pr["ref"]):
+        tool, host = "az", azure
+    elif github.is_pr_ref(pr["ref"]):
+        tool, host = "gh", github
+    else:
         return None
     try:
-        found = github.view(repo, pr["ref"])
-    except github.Unreadable as e:
-        raise refused("sha-unverifiable", f"gh cannot read {pr['ref']} in {repo}: {e}; a rating cannot be checked"
-                      " against the PR's own files", item=item_id) from None
+        found = host.view(repo, pr["ref"])
+    except host.Unreadable as e:
+        raise refused("sha-unverifiable", f"{tool} cannot read {pr['ref']} in {repo}: {e}; a rating cannot be checked"
+                      " against the PR's own base branch and files", item=item_id) from None
     if found is None:
         if notes is not None:
-            notes.append(f"gh is not installed: {pr['ref']}'s base and own files were not checked, so a stale base"
+            notes.append(f"{tool} is not installed: {pr['ref']}'s base and own files were not checked, so a stale base"
                          " would go unnoticed")
         return None
     files = found["files"]
+    if files is None and notes is not None:
+        notes.append(f"{pr['ref']} is an Azure DevOps PR: rated against its target branch {found['base']}, but its own"
+                     " files were not compared (az lists none)")
     if gitrepo.contains(repo, sha, found["head"]) is not True:
         files = None
         if notes is not None:
             notes.append(f"{pr['ref']}'s head {found['head'][:9]} is not {sha[:9]} or a descendant of it: the PR's"
                          " own files were not used to check the rating")
-    return {"ref": pr["ref"], "base": found["base"], "files": files, "head": found["head"], "listed": found["files"]}
+    return {"ref": pr["ref"], "base": found["base"], "files": files, "head": found["head"], "listed": found["files"],
+            "tool": tool}
 
 
 def judged_files(repo, pull, sha, head):
@@ -547,9 +559,17 @@ def check_on_base(repo, sha, pull, item_id):
     """Rule `sha-off-base` unless the commit `sha` of a late rating is on the branch the PR merged into: a late rating
     takes its rules from `sha`'s tree, so a commit the builder made on top of the merge, with rules of its own, would
     rate the PR by them. With `gh` (`pull`), GitHub says so (`github.compare_status`: `behind` or `identical`), and a
-    failure is `sha-unverifiable`; without it the remote-tracking default ref (`gitrepo.remote_default_base`; for a
-    checkout with no origin, its local default branch) has to hold `sha`. trk does not fetch."""
-    if pull is not None:
+    failure is `sha-unverifiable`; with `az`, the remote-tracking copy of the PR's target branch has to hold `sha`;
+    without either the remote-tracking default ref (`gitrepo.remote_default_base`; for a checkout with no origin, its
+    local default branch) has to. trk does not fetch."""
+    if pull is not None and pull["tool"] == "az" and gitrepo.resolve(repo, f"origin/{pull['base']}") is not None:
+        ref = f"origin/{pull['base']}"
+        if gitrepo.contains(repo, sha, ref) is not True:
+            raise refused("sha-off-base", f"{sha} is not on {ref}, the branch {pull['ref']} merged into, so a late rating"
+                          " there would take its rules from a commit the base branch never held. Rate a commit"
+                          f" {ref} holds (`git fetch` first if it is out of date; trk does not fetch)", item=item_id)
+        return
+    if pull is not None and pull["tool"] == "gh":
         try:
             status = github.compare_status(repo, pull["ref"], pull["base"], sha)
         except github.Unreadable as e:
