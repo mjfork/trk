@@ -55,6 +55,8 @@ Write bodies to `tmp/<slug>/` in the current project, then:
 1. `new program "<title>" --owner driver --as worker --criterion … --section notes=@… --section not-yet-specified=@…` (plus `--jira <URL>`).
 2. One decision per sharp question: `research` for facts to find, `grilling` for a choice a person must make, `prototype` for a question code answers, `task` for a chore that must happen first with no answer to find. Each `question` body stands alone: the question, what a good answer contains, and the agreed starting answer if any.
 3. A project for each piece of work whose shape is already clear enough to spec (one project can serve several destination lines; one line can need two projects). Give each a `question` section, its spec-writing brief: what the spec must settle and which destination lines (`ac-<n>`) it serves. Cut no tickets: they come after a spec is accepted.
+
+   **Slice the projects vertically, the way their tickets will be sliced** (the rule and its one exception are in the `trk` skill, "Specs, projects and programs"). A project is a complete path to something a person can see working, however narrow: never a layer ("the store work", "the API"), never a phase ("build", then "test", then "document"), and never one per team. A layer or a phase cannot be demoed, so its destination lines can only be checked by reading code, and the program learns nothing until every sibling lands. If a destination line can only be reached by several layers at once, that is one project, not one per layer.
 4. Second pass: `link <a> blocks <b>` wherever b needs a's answer first, decisions to projects and projects to projects.
 
 `decisions-so-far` and `out-of-scope` are built from closed children's outcomes; leave them to trk.

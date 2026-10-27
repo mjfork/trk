@@ -209,6 +209,24 @@ GREEN need no brief.
   Spec'd. `trk spec draft <project> --reason …` sends it back.
 - Cut tickets only after acceptance; create them all, then wire `blocks` edges
   in a second pass.
+- **Cut them as vertical slices.** This is the default, and the shape
+  `mattpocock-skills:to-tickets` calls a tracer bullet: each ticket cuts a narrow
+  but complete path through every layer the work touches (store, CLI, pages,
+  docs, tests), so a finished ticket is demoable on its own and each
+  `criterion add` line is checked by running something. A ticket that delivers
+  one layer of many ("the schema for all of it", "all the tests", "wire up the
+  CLI") is a horizontal slice: nothing works until its siblings land, its
+  criteria can only be checked by reading code, and a reviewer cannot pass or
+  fail it. Prefactoring comes first, in its own ticket: make the change easy,
+  then make the easy change.
+- **A wide refactor is the exception.** One mechanical change (rename a column,
+  retype a shared symbol) whose blast radius fans across the tree, where one
+  edit breaks every call site at once and no vertical slice lands green.
+  Sequence it expand then contract: one ticket adds the new form beside the old
+  so nothing breaks, then one ticket per batch of call sites, sized by blast
+  radius and each blocked by the expand, then a contract ticket blocked by every
+  batch deletes the old form. Say in the spec's implementation decisions why the
+  work is that shape, because the default is a vertical slice.
 - Close a project `done` with one `--kind judgment --gate close
   --criterion ac-<n> --verdict pass --note "<what delivered it>"` per live
   criterion, after every child is closed.

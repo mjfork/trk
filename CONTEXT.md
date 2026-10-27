@@ -19,7 +19,7 @@ An item that groups related projects toward one delivered outcome, stated as its
 _Avoid_: Initiative, epic
 
 **Project**:
-An item that maps onto one spec and is delivered through many tickets; may contain projects and work items.
+An item that maps onto one spec and is delivered through many tickets; may contain projects and work items. A project is itself a vertical slice: a complete path to something a person can see working, never a layer ("the store work") or a phase ("testing").
 _Avoid_: Feature, epic
 
 **Work item**:
