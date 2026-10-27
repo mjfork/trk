@@ -4,6 +4,11 @@ version = "0.1.0"
 description = "Agent-first issue tracker: one machine-wide SQLite store behind a small CLI"
 requires-python = ">=3.12"
 dependencies = []
+license = {file = "LICENSE"}
+authors = [{name = "Michael Fork"}]
+
+[project.urls]
+Repository = "https://github.com/mjfork/trk"
 
 [project.scripts]
 trk = "trk.cli:main"

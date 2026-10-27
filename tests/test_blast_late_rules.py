@@ -123,7 +123,7 @@ def test_a_base_at_the_pr_head_after_a_no_ff_merge_would_hide_the_prs_red_files(
 
 @pytest.fixture
 def early(trk, tmp_path):
-    """The PR's head predates the rules file, which main already had when it merged the PR (tr-e799e, #111):
+    """The PR's head predates the rules file, which main already had when it merged the PR (tr-e799e, PR A):
     `head` has no rules, `rules` lands on main, `m` is the no-ff merge of `head` into it."""
     r = tmp_path / "E"
     r.mkdir()

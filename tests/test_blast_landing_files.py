@@ -3,8 +3,8 @@ the file list from `pre...merge` and `base...head`, never `base...sha`, which al
 review recorded at the merge sha counts for such a rating when it lists exactly that diff, and a plain fast-forward
 merge can be rated late when `gh`'s file list proves the base.
 
-The shape is a real case: PR #112 (`src/a.py`, head `head`) merged no-ff at `m`; #113 added the rules file
-(`rules`); #114 added `src/later.py` (`later`)."""
+The shape is a real case: PR B (`src/a.py`, head `head`) merged no-ff at `m`; PR C added the rules file
+(`rules`); PR D added `src/later.py` (`later`)."""
 
 import json
 import stat

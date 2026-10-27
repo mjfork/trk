@@ -11,13 +11,14 @@ This page explains what `install.sh` does, one step at a time, and how to do eac
 
 ## Getting the code
 
-The repo has no hosted home, so you copy it by hand. There are two ways.
+```bash
+git clone https://github.com/mjfork/trk ~/src/trk
+```
 
-1. **Clone from a path or an ssh host.** Run this on the new machine:
-   ```bash
-   git clone user@host:~/projects/beads-alternative trk
-   ```
-   For a path on the same machine, use `git clone /path/to/beads-alternative trk`.
+A machine without GitHub access can take a copy in one of two ways.
+
+1. **Clone from a path or an ssh host.** Run this on the new machine: `git clone user@host:src/trk ~/src/trk`,
+   or `git clone /path/to/trk ~/src/trk` for a path on the same machine.
 2. **Send one file.** On the machine that has the repo:
    ```bash
    ./install.sh make-bundle trk.bundle

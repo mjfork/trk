@@ -34,20 +34,19 @@ You need Python 3.12 or newer, [uv](https://docs.astral.sh/uv/) (a Python tool i
 
 ### Get the code onto the machine
 
-This repo has no hosted home. Copy it from a machine that has it, in one of two ways.
-
-**Clone from a path or an ssh host.** Git can clone straight from another machine:
-
 ```bash
-git clone user@host:~/projects/beads-alternative trk
+git clone https://github.com/mjfork/trk ~/src/trk
 ```
 
-Replace `user@host:~/projects/beads-alternative` with the real location. A plain directory path works too: `git clone /path/to/beads-alternative trk`.
+To install trk with hx, nod and the Claude Code plugins at versions known to work together, use
+[gatehouse](https://github.com/mjfork/gatehouse) instead.
+
+**Clone from a path or an ssh host.** Git can clone straight from another machine: `git clone user@host:src/trk ~/src/trk`, or a plain directory path.
 
 **Send one file.** On the machine that has the repo, make a bundle. A bundle is a single file that holds the whole repo and its history:
 
 ```bash
-cd beads-alternative
+cd ~/src/trk
 ./install.sh make-bundle trk.bundle    # or: git bundle create trk.bundle master --tags
 ```
 

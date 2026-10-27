@@ -95,7 +95,7 @@ def test_a_stale_cached_base_is_refetched_so_only_the_prs_own_files_are_rated(tr
 
 
 def test_a_base_that_pulls_in_files_the_pr_never_touched_is_refused_and_records_nothing(trk, stale, gh):
-    """288609a83 against its old branch point: develop's migrations rated RED, and a false review ask opened."""
+    """The head against its old branch point: develop's migrations rated RED, and a false review ask opened."""
     t = lane_ticket(trk, stale["path"], stale["head"])
     error = refusal(trk, "blast-radius", t, "--base", stale["old"])
     assert error["rule"] == "stale-base" and error["item"] == t
@@ -147,7 +147,7 @@ def test_a_large_pr_is_checked_against_its_whole_file_list(trk, stale, gh):
 
 
 def test_the_merge_row_of_an_earlier_pr_of_the_ticket_is_not_this_heads_pre_merge_point(trk, stale, gh):
-    """tr-tk1tp rated 288609a83 against 182b69276, the first parent of the merge of PR 1687 recorded days before."""
+    """tr-tk1tp rated the head against the first parent of an earlier PR's merge, recorded days before."""
     t = lane_ticket(trk, stale["path"], stale["head"])
     seed = stale["seed"]
     git(seed, "checkout", "-q", "-b", "earlier-pr", stale["old"])
