@@ -19,6 +19,7 @@ LOCK_NAME = "flusher.lock"  # held only while a flusher registers or unregisters
 LOG_NAME = "flusher.log"
 LOG_KEEP_BYTES = 1024 * 1024  # a log past this size moves to flusher.log.1 when the next flusher starts
 FLUSH_WAIT = ("pages", "flush", "--wait")
+PS_SECONDS = 2.0  # how long to wait for `ps` where there is no /proc; past it the live pid is trusted
 
 # Rows that mark their item and every ancestor (the Affected pages table); `pages.affected` reads these too.
 ITEM_ROWS = frozenset({"item.created", "item.closed", "item.reopened", "item.updated", "spec.changed",
@@ -62,9 +63,33 @@ def recorded_pid(directory):
     return int(text) if text.isdigit() else None
 
 
+def _ps_argv(pid):
+    """The words of a live `pid`'s command line as `ps` reports them, or None when it cannot say.
+    Only the no-/proc path calls it, so no write on Linux forks."""
+    import subprocess  # imported here, not at module scope, to keep this module's import cheap
+
+    try:
+        done = subprocess.run(["ps", "-o", "command=", "-p", str(pid)],
+                              capture_output=True, text=True, timeout=PS_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return None  # no ps, or it hung: the caller trusts the live pid, as it did before this check
+    line = done.stdout.strip()
+    return line.split() or None
+
+
 def is_flusher(pid):
-    """Whether `pid` is alive and its command line runs `pages flush --wait`. Without /proc (not
-    Linux), a live pid is taken on trust."""
+    """Whether `pid` is alive and its command line runs `pages flush --wait`.
+
+    Without /proc (not Linux) the command line comes from `ps`, which costs a fork, so a dead pid is
+    ruled out by `os.kill` first and only a live one is looked up. What this closes: a recorded pid
+    that the OS has since recycled onto some unrelated live process used to be trusted, which
+    suppressed every spawn until someone removed the file, with only the timer publishing.
+
+    A live pid whose command line cannot be read at all — someone else's process, no `ps`, a `ps`
+    that hung — is still trusted, as it was before. Answering `False` there would be the safer
+    direction for publishing, since a redundant flusher exits as soon as it finds the registered one,
+    but on a box with no working `ps` it would fork one on every write; that trade is why the doubt
+    stays on the trusting side."""
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
             argv = [part.decode("utf-8", "replace") for part in f.read().split(b"\0") if part]
@@ -76,8 +101,10 @@ def is_flusher(pid):
         except ProcessLookupError:
             return False
         except PermissionError:
+            return True  # alive and not ours to inspect
+        argv = _ps_argv(pid)
+        if argv is None:
             return True
-        return True
     except OSError:
         return False
     span = len(FLUSH_WAIT)

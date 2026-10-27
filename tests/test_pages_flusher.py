@@ -119,6 +119,20 @@ def test_a_stale_pid_file_does_not_stop_the_spawn(trk, trk_home, live, spawned):
     assert spawned == [trk_home, trk_home]
 
 
+def test_a_live_process_that_is_not_a_flusher_is_not_taken_for_one():
+    """The check reads the recorded pid's command line — from /proc, or from `ps` where there is none —
+    so a pid the OS recycled onto an unrelated live process no longer passes for a flusher. Off Linux
+    such a pid used to be trusted, which suppressed every spawn until the file was removed (Michael
+    asked for this on 2026-10-27, after it failed the stale-pid test above on macOS)."""
+    assert spawn.is_flusher(os.getpid()) is False  # this test process is alive and is not a flusher
+    running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", *spawn.FLUSH_WAIT])
+    try:
+        assert spawn.is_flusher(running.pid) is True
+    finally:
+        running.terminate()
+        running.wait()
+
+
 def test_claim_renew_never_spawns(trk, trk_home, live, spawned, monkeypatch):
     ok(trk, "claim", live["D"], "--session", "S1", "--lease", "30m", "--as", "worker")
     spawned.clear()
