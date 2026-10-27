@@ -15,13 +15,13 @@ from pathlib import Path
 import pytest
 
 from feed_contract import feed_validator
-from installed_trk import MISSING, T0, TRK, Trk
+from installed_trk import GATE, T0, TRK, Trk
 from gated import DEST, resolving
 from timing import assert_fast
 
 WORKER = Path(__file__).with_name("concurrency_worker.py")
 
-pytestmark = pytest.mark.skipif(not TRK, reason=MISSING)
+pytestmark = pytest.mark.skipif(bool(GATE), reason=GATE or "")
 
 
 @pytest.fixture
@@ -33,10 +33,11 @@ def frontier(trk_bin, root):
     return [item["id"] for item in trk_bin.json("ready", "--root", root)["items"]]
 
 
-def test_ac1_init_registers_michael_and_herdr_and_refuses_a_second_init(trk_bin):
+def test_ac1_init_registers_michael_herdr_and_worker_and_refuses_a_second_init(trk_bin):
     trk_bin.ok("init", "--me", "michael")
     assert [(a["id"], a["kind"]) for a in trk_bin.json("actors")["actors"]] == [("michael", "human"), ("herdr", "agent"),
-                                                                                   ("publisher", "agent")]
+                                                                               ("worker", "agent"),
+                                                                               ("publisher", "agent")]
 
     code, error = trk_bin.error("init", "--me", "michael")
     assert (code, error["rule"]) == (1, "store-exists")

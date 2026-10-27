@@ -17,11 +17,16 @@ import pytest
 
 from conftest import Result
 from gated import DEST, accept, accepting, closable, commit, git, resolving, section_file
-from installed_trk import MISSING, TRK
+from installed_trk import MISSING, STALE, TRK
 from test_blast_and_verified import blast, feed, head, item, merge, ok, refusal, write_brief
 from test_blast_and_verified import new_ticket as new_unclaimed_ticket
 from test_merged_review import FORK, REVIEW, V, W, build_at, ledger_needs, tied_ask
 from store_note import without_note
+
+
+# A missing trk still fails every test here; a trk from another commit cannot answer for this
+# checkout at all, so those runs skip with the reason rather than failing on its behaviour.
+pytestmark = pytest.mark.skipif(bool(STALE), reason=STALE or "")
 
 
 def new_ticket(trk, parent, form="spec-bound", title="T"):

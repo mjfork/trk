@@ -13,11 +13,11 @@ from pathlib import Path
 import pytest
 
 from feed_contract import feed_validator
-from installed_trk import MISSING, T0, TRK, Trk
+from installed_trk import GATE, T0, TRK, Trk
 from gated import DEST, resolving
 from trk import store
 
-pytestmark = pytest.mark.skipif(not TRK, reason=MISSING)
+pytestmark = pytest.mark.skipif(bool(GATE), reason=GATE or "")
 
 FIXTURE = Path(__file__).parent / "fixtures" / "schema1"
 FIXTURE_OPENED_AT = "2026-10-10T14:30:00.000Z"  # after the fixture's sweep, inside its live lease

@@ -10,7 +10,7 @@ from datetime import timedelta
 import pytest
 
 from feed_contract import CONTRACT, feed_validator
-from installed_trk import MISSING, T0, TRK, Trk
+from installed_trk import MISSING, STALE, T0, TRK, Trk
 from trk import store
 from gated import DEST, accepting, resolving, ticket
 from store_note import without_note
@@ -30,6 +30,11 @@ GATES_KINDS = {"stage.changed", "criterion.added", "criterion.edited", "criterio
 # can't reach: tests/test_pages_flush.py and tests/test_pages_replies.py write them, and the suite-wide feed
 # check validates every row they write.
 PAGES_KINDS = {"page.created", "ask.replied", "comment.routed", "comment.acknowledged"}
+
+
+# A missing trk still fails every test here; a trk from another commit cannot answer for this
+# checkout at all, so those runs skip with the reason rather than failing on its behaviour.
+pytestmark = pytest.mark.skipif(bool(STALE), reason=STALE or "")
 
 
 def journal_seqs(home):
