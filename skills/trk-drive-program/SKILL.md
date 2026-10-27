@@ -17,9 +17,27 @@ Load the `trk` skill first; its rules (plain `trk` for the live store, `--json` 
 
 Every drive has a **charter** file, named in your starting prompt: the program id, your observer session, your authority (what you may decide, start, merge, file) and the people who decide the rest. The charter outranks this skill. When the charter is silent, take the narrower reading and ask your observer.
 
+## Hold the root as `orchestrator`
+
+hx finds a program's driver by one thing: a live claim on the program's root by the actor `orchestrator`. Without it, a
+reply on an ask whose asker has gone reaches nobody, because hx has no driver pane to type it into. hx reads only that
+actor, so you hold the root as `orchestrator` whatever actor your charter has you write as (`driver` or another);
+everything else you write keeps that actor.
+
+On start, from your own session (never a worker's or a subagent's, since hx binds the pane of the session that holds
+the claim):
+
+```bash
+trk actor add orchestrator --kind agent --as driver  # once per store; a refusal `actor-exists` means it is there
+trk claim <program> --as orchestrator --force      # --force is how a program is claimed, and is only for this
+```
+
+The per-turn hook renews the claim like any other, so it holds while you take a turn at least once a lease (60 minutes
+by default). It lapses during a long pause, so on every wake run the claim again before the cycle.
+
 ## Each cycle
 
-1. **Orient.** `trk show <program> --json` (gate, handoff, open asks), `trk ready --root <program> --json`, `trk waiting --all --json`, `trk claims --json`, plus the inboxes the charter names (worker reports, the people's pages, the nightly). Done when you can name every item that moved since your last cycle.
+1. **Orient.** `trk show <program> --json` (gate, handoff, open asks), `trk ready --root <program> --json`, `trk waiting --all --json`, `trk claims --json`, plus the inboxes the charter names (worker reports, the people's pages, the nightly). Check you hold the root: `trk claims --item <program> --json` shows actor `orchestrator` and your own session (`$TRK_SESSION`). A missing or someone else's claim is a fault you fix this turn: claim it as above, or, when another live session holds it, tell your observer. Done when you can name every item that moved since your last cycle.
 2. **Check the hold.** Before any worker start or heavy run, check `~/.local/state/hx/hold.json`. **Held** means `~/.local/state/hx/hold.json` exists and its `until` is null, missing, or a time in the future. A file that can't be read or parsed counts as held, so a bad file never releases a hold. A missing file, or an `until` in the past, means not held. The rule needs only the path and this test, not the rest of hx's contract (the file holds `{id, reason, by, since, until|null}`). While held, start nothing, keep your workers holding, and put `held: <reason> (until <until|further notice>)` in your turn summary. When the hold ends, resume and stagger your starts. The trk skill's "Machine holds" section has a one-command check and its output for each case.
 3. **Pick.** Take the frontier in order, urgent first. Keep up to the charter's worker limit busy at all times; the critical path (whatever the most items wait on) goes first.
 4. **Move each item by its kind:**

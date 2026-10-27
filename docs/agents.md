@@ -114,6 +114,12 @@ Things only a person may do are always asks: approving a RED change, accepting a
 
 The `trk-create-program` skill walks a session through charting a program with you. The `trk-drive-program` skill walks a driver session through running one.
 
+A driver holds its program's root as the actor `orchestrator`: `trk actor add orchestrator --kind agent --as driver` once per store,
+then `trk claim <program> --as orchestrator --force` from the driver's own session, on start and on every wake after a
+long pause. herdr's watcher (hx) finds the driver's pane only by that claim, and types replies whose asker has gone into
+it; without the claim, those replies reach nobody. Each cycle the driver checks `trk claims --item <program> --json`
+shows `orchestrator` and its own session. The `trk-drive-program` skill has the steps.
+
 ## Handoffs
 
 Before a session stops, pauses for long, or runs `/clear`, it writes a handoff: `trk handoff add <id> --as worker` with a first line that says where the work stands and what comes next. A later session reads it with `trk handoff show <id>` and starts from there. A `/clear` makes a new session id, so the old claim lapses and the session must claim again.
