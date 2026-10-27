@@ -1,14 +1,19 @@
-"""The top-level page: every root item in the store, where each one stands, and what is in progress
-below it (Page publisher spec: The top-level page).
+"""The top-level page: every open root item in the store, where each one stands, and what is in
+progress below it (Page publisher spec: The top-level page).
 
 One page per store, a `pages` row keyed `top:`, published, diffed, marked and pulled like an item's page.
 It belongs to no root and is never deleted. Michael, 2026-10-26: "i just need a single top level page
 showing all the root items in trk and where they are".
 
-- **Roots** (`roots`): every top-level item in rank order, closed ones too, each linking its page, with
-  its owner, tickets done, open asks below, how much is in progress below, and its flags.
-- **In progress** (`in-progress`): everything in the store work has started on, the same box every item
-  page shows for its own subtree (`render._Page.in_progress_box`).
+- **Roots** (`roots`): every OPEN top-level item in rank order, each linking its page, with its owner,
+  tickets done, open asks below, how much is in progress below, and its flags.
+- **In progress** (`in-progress`): everything under those roots work has started on, the same box every
+  item page shows for its own subtree (`render._Page.in_progress_box`).
+
+A closed root leaves the page, and its subtree with it: the totals and the in-progress box count only
+what the roots table lists, so every number on the page describes the work it shows. Michael,
+2026-10-26: "can we have top level only show OPEN items". Nothing is lost by it — a closed root keeps
+its own page and its trail to here, reachable by its URL and from whatever links it.
 
 It is published first in a flush pass, before any item page, because every page's trail links it: each page
 published after it is born with that link, so no second pass is needed to put one in. Its own links to the
@@ -50,8 +55,8 @@ def entry(conn):
 
 
 def roots(conn):
-    """Every top-level item in rank order, closed ones too."""
-    return [row for row in items.children(conn, None) if render.page_kind(row) is not None]
+    """Every open top-level item in rank order. A closed root is off this page (see the module docstring)."""
+    return [row for row in items.children(conn, None, open_only=True) if render.page_kind(row) is not None]
 
 
 def render_page(conn):
@@ -67,6 +72,7 @@ CSS = """
 class _Top(render._Page):
     def __init__(self, conn):
         self.conn, self.row, self.kind = conn, None, KIND
+        self._below = None  # the open roots and their subtrees, read once (see `below`)
         self.now = clock.now()  # read once, as every render does; nothing on this page shows it
         self.urls = {r["item_id"]: r["url"] for r in conn.execute(
             "SELECT item_id, url FROM pages WHERE slug IS NOT NULL AND url IS NOT NULL ORDER BY item_id")}
@@ -84,31 +90,37 @@ class _Top(render._Page):
             + "\n</main>\n</body>\n</html>\n"
         )
 
+    def below(self):
+        """Every open root this page lists and everything under them, closed descendants too: the scope of
+        the totals and of the in-progress box. Read once per render, so the page cannot count a root its
+        table leaves out."""
+        if self._below is None:
+            found = roots(self.conn)
+            self._below = found + [row for root in found for row in self.subtree(root["id"])]
+        return self._below
+
     # --- header and totals ---
 
     def head(self, found):
-        open_roots = [row for row in found if row["status"] == "open"]
         # No render time here: an absolute "Updated" fact would change these bytes on every render, so every
         # flush would rewrite the page. A render stays a pure function of the store (`render`'s docstring).
-        facts = [("Top-level items", f"{len(open_roots)} open" + (f", {len(found) - len(open_roots)} closed"
-                                                                  if len(found) != len(open_roots) else ""))]
+        facts = [("Top-level items", f"{len(found)} open")]
         people = self.needs_you()
         if people:
             facts.append(("Needs you", ", ".join(people)))
         dl = "".join(f"<div><dt>{name}</dt><dd>{value}</dd></div>" for name, value in facts)
         return (f'<header class="head"{_attr("header")}>\n<div class="pills"><span class="pill">top level</span></div>\n'
                 f"<h1>{_e(TITLE)}</h1>\n"
-                '<p class="intro">Every top-level item in this tracker and where it stands. '
+                '<p class="intro">Every open top-level item in this tracker and where it stands. '
                 'Follow one to its projects, tickets and open questions.</p>\n'
                 f'<dl class="facts">{dl}</dl>\n</header>')
 
     def tiles_box(self, found):
-        everything = items.outline(self.conn, include_closed=True)
-        rows = [row for row, _level in everything]
+        rows = self.below()
         tickets = [r for r in rows if stages.is_ticket(r)]
         done = sum(1 for r in tickets if r["resolution"] == "done")
         inner = "\n".join([
-            self.tile(sum(1 for r in found if r["status"] == "open"), "top-level items"),
+            self.tile(len(found), "top-level items"),
             self.tile(sum(1 for r in rows if r["kind"] == "project" and r["status"] == "open"), "projects"),
             self.tile(f"{done}/{len(tickets)}", "tickets done"),
             self.tile(sum(1 for r in rows if r["form"] == "decision" and r["status"] == "open"), "open decisions"),

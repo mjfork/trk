@@ -16,7 +16,7 @@ import re
 from . import asks, claims, clock, criteria, evidence, gitrepo, handoffs, items, ledger, markdown, ready, sections, stages
 from .errors import refused
 
-RENDER_VERSION = 8
+RENDER_VERSION = 9
 WAITING_HEADING = "Waiting on people"  # the waiting box's heading, which the pull's pointer at the boxes names
 
 NEEDS_YOU = "needs-you:"  # a person's page key in `pages`: `needs-you:<actor>` (see `needs_you`)
@@ -239,6 +239,11 @@ class _Page:
 
     def subtree(self, item_id):
         return self.conn.execute(_SUBTREE, (item_id,)).fetchall()
+
+    def below(self):
+        """The rows this page's rollups cover: everything under its item. `top._Top` widens it to the
+        open roots it lists and their subtrees."""
+        return self.subtree(self.row["id"])
 
     def open_asks_below(self, item_id):
         return sum(1 for r in self.subtree(item_id) if r["form"] == "ask" and r["status"] == "open")
@@ -488,11 +493,10 @@ class _Page:
                            self.child_row)]
 
     def in_progress_box(self):
-        """What work has started on below this page (everything in the store, on the top-level page), with
+        """What work has started on below this page (under every open root, on the top-level page), with
         who holds it: the one place a page says what is moving underneath it. A page with nothing below it
         at all, as every ticket has, renders no box."""
-        below = [row for row, _level in items.outline(self.conn, include_closed=True)] \
-            if self.row is None else self.subtree(self.row["id"])
+        below = self.below()
         if not below:
             return ""
         found = in_progress(self.conn, below)

@@ -136,7 +136,7 @@ def _set(conn, key, value):
 def page_rows(conn):
     """(item, level, pages row or None) for every page-bearing item, closed ones too, in tree order, then
     every person's Needs-you page (its item a stand-in: id `needs-you:<actor>`, title and kind), then the
-    top-level page (id `top:`), last because it links them all."""
+    top-level page (id `top:`), last in the listing although `top.LEVEL` publishes it first."""
     rows = {row["item_id"]: row for row in conn.execute("SELECT * FROM pages")}
     for item, level in items.outline(conn, include_closed=True):
         if page_kind(item) is not None:
@@ -454,8 +454,8 @@ def mark(st):
             if found is not every and people and _touches_people(conn, row):
                 found = found | people
             if found is not every and found:
-                # The top-level page shows every root's rollups and everything in progress, so any row
-                # that marks a page marks it as well (spec 04, The top-level page).
+                # The top-level page shows every open root's rollups and everything in progress below
+                # them, so any row that marks a page marks it as well (spec 04, The top-level page).
                 found = set(found) | {top.KEY}
             due = clock.stamp(clock.parse(row["at"]) + QUIET)
             for item in found:

@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from gated import DEST
+from gated import DEST, ticket
 from test_pages_flush import db, flush, live, page_row, tag_of  # noqa: F401 (fixtures)
 from test_pages_setup import ME, fake, journal, setup_argv, token_file, tree  # noqa: F401 (fixtures)
 from trk import render, top
@@ -42,6 +42,12 @@ def in_progress(body):
     return re.findall(r'data-comment-id="progress-([^"]+)"', match.group(1))
 
 
+def tiles(body):
+    """The top-level page's tiles as {label: value}."""
+    found = re.findall(r'<span class="n">([^<]*)</span><span class="l">([^<]*)</span>', body)
+    return {label: value for value, label in found}
+
+
 def roots_listed(body):
     """The title cell of every row of the roots table, in page order. A title is plain text until its
     own page is published and a link after that, so the text is what the test reads."""
@@ -62,7 +68,7 @@ def two_roots(trk, tree):
 # ----- the page itself ------------------------------------------------------------------------------
 
 
-def test_the_top_level_page_lists_every_root_item(trk, two_roots):
+def test_the_top_level_page_lists_every_open_root_item(trk, two_roots):
     body = page_of(trk, TOP)
     assert "<h1>All work</h1>" in body
     assert roots_listed(body) == ["P", "Q"]
@@ -70,10 +76,9 @@ def test_the_top_level_page_lists_every_root_item(trk, two_roots):
 
 
 def test_the_top_level_page_counts_what_is_under_every_root(trk, two_roots):
-    body = page_of(trk, TOP)
-    tiles = re.findall(r'<span class="n">([^<]*)</span><span class="l">([^<]*)</span>', body)
-    assert dict((label, value) for value, label in tiles)["tickets done"] == "0/1"
-    assert dict((label, value) for value, label in tiles)["top-level items"] == "2"
+    counts = tiles(page_of(trk, TOP))
+    assert counts["tickets done"] == "0/1"
+    assert counts["top-level items"] == "2"
 
 
 def test_the_top_level_page_renders_the_same_bytes_at_a_later_clock(trk, two_roots, monkeypatch):
@@ -84,9 +89,26 @@ def test_the_top_level_page_renders_the_same_bytes_at_a_later_clock(trk, two_roo
     assert page_of(trk, TOP) == first
 
 
-def test_a_closed_root_stays_on_the_top_level_page(trk, two_roots):
-    assert trk("close", two_roots["Q"], "--resolution", "wont-do", "--outcome", "dropped").code == 0
-    assert roots_listed(page_of(trk, TOP)) == ["P", "Q"]
+def test_a_closed_root_leaves_the_top_level_page(trk, two_roots):
+    """Michael, 2026-10-26: "can we have top level only show OPEN items". The root keeps its own page and
+    its trail back here; what goes is its line on this page and its share of the totals."""
+    ok(trk, "close", two_roots["Q"], "--resolution", "wont-do", "--outcome", "dropped")
+    body = page_of(trk, TOP)
+    assert roots_listed(body) == ["P"]
+    assert tiles(body)["top-level items"] == "1"
+    assert crumbs(page_of(trk, two_roots["Q"])) == ["All work"]
+
+
+def test_the_totals_cover_only_the_roots_the_page_lists(trk, two_roots):
+    """Every number on the page describes the work it shows, so a closed root takes its subtree's counts
+    with it: `tickets done` is live work, not the store's history."""
+    q = two_roots["Q"]
+    qt = ok(trk, "new", "work-item", "QT", "--form", "self-contained", "--parent", q,
+            *ticket("self-contained")).strip()
+    assert tiles(page_of(trk, TOP))["tickets done"] == "0/2"
+    ok(trk, "close", qt, "--resolution", "wont-do", "--outcome", "dropped")
+    ok(trk, "close", q, "--resolution", "wont-do", "--outcome", "dropped")
+    assert tiles(page_of(trk, TOP))["tickets done"] == "0/1"
 
 
 # ----- the trail every page carries ----------------------------------------------------------------
