@@ -31,7 +31,8 @@ def trk_bin(trk_home):
 def fresh(trk_bin):
     trk_bin.ok("init", "--me", "michael")
     trk_bin.ok("actor", "add", "kim", "--kind", "human")
-    trk_bin.ok("actor", "add", "worker", "--kind", "agent")
+    if "worker" not in trk_bin.ok("actors"):   # an installed trk older than `trk init` registering it
+        trk_bin.ok("actor", "add", "worker", "--kind", "agent")
 
 
 def frontier(trk_bin, root):

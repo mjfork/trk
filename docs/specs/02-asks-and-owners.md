@@ -190,7 +190,7 @@ A version 1 store has no asks (Core refuses `--form ask`), so nothing else needs
 
 ## Acceptance criteria
 
-End-to-end checks against a fresh store (`trk init --me michael`, then `trk actor add kim --kind human` and `trk actor add worker --kind agent`) unless stated:
+End-to-end checks against a fresh store (`trk init --me michael`, then `trk actor add kim --kind human`; `worker` was registered by hand here until `trk init` started registering it, 2026-10-27) unless stated:
 
 1. `trk roles --json` lists `engineering` and `product`, both held by `michael`. `trk roles set product kim` journals `role.set`. `trk roles set parent kim` exits 1 with rule `reserved-role`.
 2. `trk new program P` stores owner `michael` (the default owner). `trk edit P --no-owner` exits 1 with rule `owner-required`. After `trk config set default-owner kim`, a new top-level item is owned by `kim`.

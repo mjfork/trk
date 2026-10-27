@@ -104,8 +104,10 @@ def world(trk, tmp_path):
 
 def setup(trk, repo):
     ok(trk, "init", "--me", "michael")
-    for agent in ("worker", "builder", "reviewer"):
+    for agent in ("builder", "reviewer"):
         ok(trk, "actor", "add", agent, "--kind", "agent")
+    if "worker" not in ok(trk, "actors"):   # an installed trk older than `trk init` registering it
+        ok(trk, "actor", "add", "worker", "--kind", "agent")
     p = ok(trk, "new", "program", "P", *DEST)
     j = ok(trk, "new", "project", "J", "--parent", p, "--repo", repo["path"])
     accept(trk, j)

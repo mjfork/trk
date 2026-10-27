@@ -809,7 +809,12 @@ def create(prefix, me, display):
                     ("epoch", new_epoch()),
                 ],
             )
-            for actor_id, kind, actor_display in ((me, "human", display or me), ("herdr", "agent", "herdr")):
+            # `worker` is here because every skill writes `--as worker`: without it the first worker claim
+            # on a fresh store is refused `unknown-actor`, which no next-step print reliably prevents.
+            # Michael approved it at 7002060, 2026-10-27: "In trk init (store.create, beside herdr and
+            # publisher) - the only place that fixes every fresh store for every entry point".
+            for actor_id, kind, actor_display in ((me, "human", display or me), ("herdr", "agent", "herdr"),
+                                                  ("worker", "agent", "worker")):
                 add_actor(tx, actor_id, kind, actor_display)
             config.seed(tx, me)
             roles.seed(tx, me)

@@ -97,7 +97,7 @@ def world(trk, monkeypatch, seeded_ids):
     w.at(0)
     trk("init", "--me", "michael", "--display", "Michael Fork")
     w.ok("actor", "add", "kim", "--kind", "human", "--display", "Kim")
-    w.ok("actor", "add", "worker", "--kind", "agent")
+    w.tick()  # `trk init` registers `worker` now; the clock keeps the timeline the goldens were recorded at
     w.ok("roles", "set", "product", "kim")
     p = w.ok("new", "program", "Tracker v1", "--criterion", "Pages replace the boards",
              "--criterion", "Asks are answered by comment", "--section", f"notes={w.file('notes', NOTES)}",
@@ -533,7 +533,7 @@ def test_spec_ac4_render_half_an_ask_on_d_shows_the_same_box_on_d_j_and_p(trk, m
     w.at(0)
     trk("init", "--me", "michael")
     w.ok("actor", "add", "kim", "--kind", "human")
-    w.ok("actor", "add", "worker", "--kind", "agent")
+    w.tick()  # as in `world`: the minute registering `worker` used to take
     w.ok("roles", "set", "product", "kim")
     p = w.ok("new", "program", "P", *DEST)
     j = w.ok("new", "project", "J", "--parent", p)

@@ -228,7 +228,6 @@ def test_a_plain_ask_under_a_red_ticket_is_never_held(trk, tmp_path, red):
 def test_a_yellow_ticket_and_its_ask_are_never_held(trk, tmp_path, clock):
     path, sha = lane_repo(tmp_path, {".trk/blast-radius": RULES}, ["src/a.py"])
     t = lane_ticket(trk, path, sha)
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     assert ok(trk, "blast-radius", t, "--as", "worker") == "yellow"
     plain = plain_ask(trk, tmp_path, t)
     assert ids(waiting(trk, "--me", "michael")) == [plain]

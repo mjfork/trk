@@ -11,10 +11,10 @@ This page explains the workflow trk is built for: one person, a driver session t
 | **Worker** | A fresh session that builds one ticket, or specs one project. | `--as worker` |
 | **Auditor, reviewer** | A separate session that checks a worker's output. | `--as auditor` |
 
-`trk init` registers only `herdr` and `publisher` besides you. Register the agents you use:
+`trk init` registers `worker`, `herdr` and `publisher` besides you, so a fresh store takes a worker's
+claim without a setup step. Register any other agents you use:
 
 ```bash
-trk actor add worker --kind agent
 trk actor add driver --kind agent
 trk actor add auditor --kind agent
 trk actors

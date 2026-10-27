@@ -16,7 +16,6 @@ S1 = "11111111-1111-1111-1111-111111111111"
 @pytest.fixture
 def store(trk):
     trk("init", "--me", "michael")
-    trk("actor", "add", "worker", "--kind", "agent")
     return trk
 
 

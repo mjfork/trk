@@ -28,7 +28,7 @@ def refusal(trk, *argv, code=1):
 @pytest.fixture
 def world(trk):
     ok(trk, "init", "--me", "michael")
-    for agent in ("worker", "auditor"):
+    for agent in ("auditor",):   # `worker` comes with the store (trk init)
         ok(trk, "actor", "add", agent, "--kind", "agent")
     p = ok(trk, "new", "program", "P", *DEST)
     j = ok(trk, "new", "project", "J", "--parent", p)
@@ -390,7 +390,6 @@ def test_a_project_spec_is_accepted_only_by_a_session_that_wrote_none_of_it(trk)
     from gated import PROJECT_SECTIONS, section_file
 
     ok(trk, "init", "--me", "michael")
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     p = ok(trk, "new", "program", "P", *DEST)
     j = ok(trk, "new", "project", "J", "--parent", p, *DEST)
     for handle in PROJECT_SECTIONS:

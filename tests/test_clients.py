@@ -25,7 +25,6 @@ def ok(result):
 @pytest.fixture
 def world(trk):
     ok(trk("init", "--me", "michael", "--json"))
-    ok(trk("actor", "add", "worker", "--kind", "agent", "--display", "Worker", "--json"))
     ok(trk("roles", "set", "product", "worker", "--json"))
 
     def new(*argv):

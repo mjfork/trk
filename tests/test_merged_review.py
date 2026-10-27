@@ -34,7 +34,7 @@ def lane(trk, tmp_path):
     commit(r, ".trk/blast-radius", YELLOW + "RED contract/**\n")
     git(r, "checkout", "-q", "-b", "feature")
     ok(trk, "init", "--me", "michael")
-    for agent in ("worker", "builder", "reviewer"):
+    for agent in ("builder", "reviewer"):   # `worker` comes with the store (trk init)
         ok(trk, "actor", "add", agent, "--kind", "agent")
     p = ok(trk, "new", "program", "P", *DEST)
     j = ok(trk, "new", "project", "J", "--parent", p, "--repo", str(r))

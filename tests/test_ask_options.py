@@ -12,7 +12,6 @@ from test_asks import ask, decision, new, refusal, show
 def store(trk):
     trk("init", "--me", "michael")
     trk("actor", "add", "kim", "--kind", "human")
-    trk("actor", "add", "worker", "--kind", "agent")
     trk("roles", "set", "product", "kim")
     return trk
 

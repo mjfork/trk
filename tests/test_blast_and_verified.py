@@ -141,7 +141,6 @@ def test_ac4_a_green_ticket_merges_unreviewed_and_reaches_verified_closing_done(
 
 def test_reaching_verified_is_refused_while_a_child_ask_is_open_then_closes_and_releases_the_claim(trk, world):
     t = new_ticket(trk, world["J"])
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     ok(trk, "claim", t, "--session", "W", "--as", "worker")
     a = ok(trk, "ask", t, "--to", "product", "Which?", "--question", f"@{section_file('question')}", "--as", "worker")
     built(trk, world, t)
@@ -564,7 +563,6 @@ def store_bytes(home):
 def test_a_sensitive_directory_stores_counts_per_colour_and_no_file_name(trk, tmp_path, trk_home):
     path, sha = lane_repo(tmp_path, {".trk/blast-radius": SENSITIVE_RULES}, CORPUS)
     t = lane_ticket(trk, path, sha)
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     row = blast(trk, t, "--as", "worker")
     assert row["detail"].pop("base")  # the rating's base, kept for the Merged gate to check again
     assert row["detail"] == {"lane": "red", "files": [

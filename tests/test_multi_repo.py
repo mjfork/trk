@@ -26,7 +26,6 @@ def world(trk, tmp_path):
     commit(a, "a.txt")
     b0 = commit(b, ".trk/blast-radius", "# no rules: every change rates green\n")
     ok(trk, "init", "--me", "michael")
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     p = ok(trk, "new", "program", "P", *DEST)
     j = ok(trk, "new", "project", "J", "--parent", p, "--repo", str(a), "--repo", str(b))
     accept(trk, j)

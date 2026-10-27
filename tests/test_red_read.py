@@ -17,7 +17,6 @@ def red_ticket(trk, tmp_path):
     """Ticket T7 at Built changing `contract/x.json`, with agent `worker` registered: (path, head sha, T7)."""
     path, sha = lane_repo(tmp_path, {".trk/blast-radius": RULES}, ["contract/x.json"])
     t7 = lane_ticket(trk, path, sha)
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     return path, sha, t7
 
 
@@ -125,7 +124,6 @@ def test_a_direct_approval_needs_no_ref_and_answers_the_ask_at_the_head(trk, tmp
 def test_a_direct_review_stores_the_full_head_when_the_pr_row_holds_a_short_sha(trk, tmp_path):
     path, sha = lane_repo(tmp_path, {".trk/blast-radius": RULES}, ["contract/x.json"])
     ok(trk, "init", "--me", "michael")
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     p = ok(trk, "new", "program", "P", *DEST)
     j = ok(trk, "new", "project", "J", "--parent", p, "--repo", path)
     accept(trk, j)
@@ -233,7 +231,6 @@ def test_an_approval_at_another_sha_leaves_the_ask_open(trk, tmp_path):
 def test_a_green_or_yellow_rating_opens_no_ask_and_needs_no_human_review(trk, tmp_path):
     path, sha = lane_repo(tmp_path, {".trk/blast-radius": RULES}, ["src/a.py"])
     t = lane_ticket(trk, path, sha)
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     assert ok(trk, "blast-radius", t, "--as", "worker") == "yellow"
     assert asks_under(trk, t) == []
     merge(trk, t, sha)
@@ -346,7 +343,6 @@ def test_a_re_rating_to_yellow_withdraws_the_open_red_read_ask(trk, tmp_path):
     path, _ = lane_repo(tmp_path, {".trk/blast-radius": "RED contract/**\nYELLOW docs/**\n"},
                         ["contract/x.json", "docs/y.md"])
     t7 = lane_ticket(trk, path, git(path, "rev-parse", "HEAD"))
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     assert ok(trk, "blast-radius", t7, "--as", "worker") == "red"
     [ask] = asks_under(trk, t7)
     git(path, "branch", "-f", "main", "HEAD~1")  # the RED file lands on main; the PR keeps its YELLOW one
@@ -401,7 +397,6 @@ def role_ticket(trk, tmp_path, rules):
     human `francis` (holding `product`) registered: (head sha, ticket)."""
     path, sha = lane_repo(tmp_path, {".trk/blast-radius": rules}, ["reg/accepted-rulings.json", "contract/x.json"])
     t = lane_ticket(trk, path, sha)
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     ok(trk, "actor", "add", "francis", "--kind", "human")
     ok(trk, "roles", "set", "product", "francis")
     return sha, t

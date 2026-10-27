@@ -22,7 +22,6 @@ def stamp(moment):
 def store_(trk, monkeypatch, tmp_path):
     monkeypatch.setenv("TRK_NOW", stamp(NOW - timedelta(days=1)))
     trk("init", "--me", "michael")
-    trk("actor", "add", "worker", "--kind", "agent")
     path = tmp_path / "question.md"
     path.write_text("Which?\n")
     trk.question = f"@{path}"

@@ -82,7 +82,6 @@ def add(trk, item_id, kind, *flags, actor="worker"):
 def start(trk):
     """A store with a human `michael` and an agent `worker`, for the tests that make their own program."""
     ok(trk, "init", "--me", "michael")
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
 
 
 def checkout(tmp_path, name, origin="https://github.com/o/r.git"):
@@ -98,7 +97,6 @@ def checkout(tmp_path, name, origin="https://github.com/o/r.git"):
 @pytest.fixture
 def world(trk, tmp_path):
     ok(trk, "init", "--me", "michael")
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     ok(trk, "actor", "add", "kim", "--kind", "human")
     ok(trk, "roles", "set", "security", "kim")
     return {"P": ok(trk, "new", "program", "P", *DEST, "--repo", checkout(tmp_path, "r"))}

@@ -367,7 +367,6 @@ def test_herdr_renews_an_idle_sessions_claims_on_its_behalf(store, trk_home, mon
     d = decision(store, "D")
     e = decision(store, "E")
     f = decision(store, "F")
-    store("actor", "add", "worker", "--kind", "agent")
     for item, session in ((d, "s-1"), (e, "s-1"), (f, "s-2")):
         assert claim(store, item, "--session", session, "--as", "worker").code == 0
     at(monkeypatch, "2026-10-10T12:31:00.000Z")
@@ -557,7 +556,6 @@ def test_ac6_a_supersede_releases_the_claim_on_the_replaced_item(store, trk_home
 
 def test_renew_without_an_actor_is_written_by_the_claims_own_actor(store, trk_home, monkeypatch):
     """tr-82j8x ledger-5: the session hook runs `claim renew` with no --as; its rows are not the default actor's."""
-    store("actor", "add", "worker", "--kind", "agent")
     d = decision(store, "D")
     claim(store, d, "--session", "s-1", "--as", "worker")
     at(monkeypatch, "2026-10-10T12:31:00.000Z")
@@ -568,7 +566,6 @@ def test_renew_without_an_actor_is_written_by_the_claims_own_actor(store, trk_ho
 
 
 def test_renew_with_as_is_written_by_that_actor(store, trk_home, monkeypatch):
-    store("actor", "add", "worker", "--kind", "agent")
     d = decision(store, "D")
     claim(store, d, "--session", "s-1", "--as", "worker")
     at(monkeypatch, "2026-10-10T12:31:00.000Z")

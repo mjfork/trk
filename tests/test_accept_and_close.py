@@ -48,7 +48,6 @@ def judge(trk, item_id, gate, *flags, note="Reviewed and complete."):
 @pytest.fixture
 def world(trk):
     ok(trk, "init", "--me", "michael")
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     p = ok(trk, "new", "program", "P", *DEST)
     k = ok(trk, "new", "project", "K", "--parent", p)
     return {"P": p, "K": k}

@@ -114,7 +114,6 @@ def test_sub_headings_and_lists_inside_a_section_are_its_text():
 def test_yellow_and_green_audits_need_no_brief(trk, tmp_path, files, lane):
     path, sha = lane_repo(tmp_path, {".trk/blast-radius": RULES}, files)
     t = lane_ticket(trk, path, sha)
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     ok(trk, "actor", "add", "reviewer", "--kind", "agent")
     assert ok(trk, "blast-radius", t, "--as", "worker") == lane
     assert audit(trk, t).code == 0
@@ -136,7 +135,6 @@ def gate_needs(trk, t):
 def test_merged_lacks_the_brief_of_a_red_ticket_audited_before_it_was_rated(trk, tmp_path):
     path, sha = lane_repo(tmp_path, {".trk/blast-radius": RULES}, ["contract/x.json"])
     t = lane_ticket(trk, path, sha)
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     ok(trk, "actor", "add", "reviewer", "--kind", "agent")
     assert audit(trk, t).code == 0  # unrated: no brief asked yet
     assert ok(trk, "blast-radius", t, "--as", "worker") == "red"
@@ -159,7 +157,7 @@ def test_merged_names_only_the_headings_a_red_brief_still_lacks(trk, red):
 def test_a_red_re_rating_after_a_green_one_brings_the_brief_back_into_the_gate(trk, tmp_path):
     path, sha = lane_repo(tmp_path, {".trk/blast-radius": RULES}, ["contract/x.json"])
     t = lane_ticket(trk, path, sha)
-    for actor in ("worker", "reviewer"):
+    for actor in ("reviewer",):   # `worker` comes with the store (trk init)
         ok(trk, "actor", "add", actor, "--kind", "agent")
     assert ok(trk, "blast-radius", t, "--as", "worker") == "red"
     root = git(path, "rev-parse", "main")
@@ -188,7 +186,6 @@ def test_a_brief_removed_after_the_audit_is_missing_at_merged(trk, red):
 def test_the_merged_gate_of_a_yellow_or_green_ticket_never_asks_for_a_brief(trk, tmp_path, files, lane):
     path, sha = lane_repo(tmp_path, {".trk/blast-radius": RULES}, files)
     t = lane_ticket(trk, path, sha)
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     assert ok(trk, "blast-radius", t, "--as", "worker") == lane
     assert "review-brief" not in gate_needs(trk, t)
 

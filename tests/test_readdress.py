@@ -12,7 +12,7 @@ def store(trk):
     """michael (default owner), kim (human) holding product, bot (agent) holding engineering, and two
     agents: asker, who opens every ask, and worker."""
     trk("init", "--me", "michael")
-    for actor, kind in (("kim", "human"), ("bot", "agent"), ("asker", "agent"), ("worker", "agent")):
+    for actor, kind in (("kim", "human"), ("bot", "agent"), ("asker", "agent")):   # worker: trk init
         assert trk("actor", "add", actor, "--kind", kind).code == 0
     assert trk("roles", "set", "product", "kim").code == 0
     assert trk("roles", "set", "engineering", "bot").code == 0

@@ -18,8 +18,9 @@ PARENT_OWNER = "michael"  # owns the program both asks sit under
 UNRELATED_HUMAN = "sam"
 UNRELATED_AGENT = "stray"
 
+# ASKER is `worker`, which `trk init` registers, so it is not in the list the fixture registers.
 ACTORS = (
-    (ASKER, "agent"), (HUMAN_ADDRESSEE, "human"), (AGENT_ADDRESSEE, "agent"),
+    (HUMAN_ADDRESSEE, "human"), (AGENT_ADDRESSEE, "agent"),
     (UNRELATED_HUMAN, "human"), (UNRELATED_AGENT, "agent"),
 )
 

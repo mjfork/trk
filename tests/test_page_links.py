@@ -39,7 +39,6 @@ def make(trk, trk_home, tmp_path, remote):
     if remote:
         git(repo, "remote", "add", "origin", remote)
     ok(trk, "init", "--me", "michael")
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     p = ok(trk, "new", "program", "P", *DEST)
     j = ok(trk, "new", "project", "J", "--parent", p, "--repo", str(repo))
     accept(trk, j)

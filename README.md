@@ -96,10 +96,9 @@ export TRK_HOME=$(mktemp -d)/store
 trk init --me alice --display "Alice"
 ```
 
-`alice` is you: the person. trk calls every person and every agent an **actor**. Register an agent actor too, called `worker`, so agents write under their own name and not under yours. Then list the actors and the roles they hold:
+`alice` is you: the person. trk calls every person and every agent an **actor**. The agent actors `worker`, `herdr` and `publisher` come with a new store, so agents write under their own name and not under yours. List the actors and the roles they hold:
 
 ```bash quickstart
-trk actor add worker --kind agent
 trk actors
 trk roles
 ```

@@ -29,7 +29,6 @@ def ticket(trk, title, *argv):
 
 def ask(trk, tmp_path, parent, title, role="product"):
     """An ask from the agent `worker` (registered on first use), so it never addresses its asker."""
-    trk("actor", "add", "worker", "--kind", "agent")
     question = tmp_path / "question.md"
     question.write_text("Which way?\n")
     result = trk("ask", parent, "--to", role, title, "--question", f"@{question}", "--as", "worker", "--json")

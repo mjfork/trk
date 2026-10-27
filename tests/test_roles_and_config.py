@@ -12,7 +12,6 @@ def store(trk):
     """The spec's acceptance store: init --me michael, then kim (human) and worker (agent)."""
     trk("init", "--me", "michael", "--display", "Michael Fork")
     trk("actor", "add", "kim", "--kind", "human", "--display", "Kim")
-    trk("actor", "add", "worker", "--kind", "agent")
     return trk
 
 

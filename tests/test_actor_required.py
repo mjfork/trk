@@ -11,7 +11,6 @@ from test_asks import journal
 @pytest.fixture
 def store(trk):
     trk("init", "--me", "michael")
-    trk("actor", "add", "worker", "--kind", "agent")
     return trk
 
 

@@ -39,7 +39,6 @@ def tree(trk, monkeypatch):
 
     ok("init", "--me", "michael")
     ok("actor", "add", "kim", "--kind", "human")
-    ok("actor", "add", "worker", "--kind", "agent")
     ok("roles", "set", "product", "kim")
     p = ok("new", "program", "P", *DEST)
     j = ok("new", "project", "J", "--parent", p)

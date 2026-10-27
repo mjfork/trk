@@ -4,6 +4,7 @@ on PATH, so nothing touches this machine's real tool, store, skills, settings or
 import hashlib
 import json
 import os
+import sqlite3
 import shutil
 import subprocess
 import sys
@@ -283,3 +284,48 @@ def test_ac1_make_bundle_packs_the_default_branch_and_tags_but_no_worktree_refs(
     assert heads() == ["refs/heads/master", "refs/remotes/origin/HEAD", "refs/remotes/origin/master", "refs/tags/v1"]
     everything = heads("--all-branches")
     assert "refs/remotes/origin/unmerged" in everything and "refs/remotes/origin/wt-branch" in everything
+
+
+def actors_in(store):
+    conn = sqlite3.connect(store / "store.db")
+    try:
+        return {row[0] for row in conn.execute("SELECT id FROM actors")}
+    finally:
+        conn.close()
+
+
+def test_a_store_from_before_the_worker_actor_is_topped_up(box):
+    """`trk init` registers `worker` now, but a store made before it does not have one, and every skill
+    writes `--as worker`. Installing over such a store registers it; a rerun writes nothing."""
+    box()
+    store = box.home / "store"
+    assert "worker" in actors_in(store)
+
+    conn = sqlite3.connect(store / "store.db")          # as an older trk left it: no worker
+    with conn:
+        conn.execute("DELETE FROM actors WHERE id = 'worker'")
+    conn.close()
+    assert "worker" not in actors_in(store)
+
+    again = box()
+
+    assert "registering the 'worker' agent actor" in again.stdout
+    assert "worker" in actors_in(store)
+
+    once_more = box()
+
+    assert "registering the 'worker' agent actor" not in once_more.stdout, "a rerun writes nothing"
+
+
+def test_a_dry_run_does_not_top_up_the_worker_actor(box):
+    box()
+    store = box.home / "store"
+    conn = sqlite3.connect(store / "store.db")
+    with conn:
+        conn.execute("DELETE FROM actors WHERE id = 'worker'")
+    conn.close()
+
+    done = box("--dry-run")
+
+    assert "[dry-run] register the 'worker' actor" in done.stdout
+    assert "worker" not in actors_in(store)

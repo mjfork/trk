@@ -39,7 +39,6 @@ def repos(tmp_path):
 @pytest.fixture
 def world(trk):
     ok(trk("init", "--me", "michael", "--json"))
-    ok(trk("actor", "add", "worker", "--kind", "agent", "--display", "Worker", "--json"))
 
     def new(*argv):
         return ok(trk("new", *argv, *new_flags(argv), "--as", "worker", "--json"))["item"]

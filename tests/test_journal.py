@@ -42,8 +42,9 @@ def test_init_journals_the_seeded_actors_the_default_owner_and_the_seeded_roles(
     trk("init", "--me", "michael", "--display", "Michael Fork")
     rows = journal(trk_home)
     assert [(r["change"], r["item"], r["actor"]) for r in rows] == [
-        ("actor.added", None, "michael"),
-        ("actor.added", None, "michael"),
+        ("actor.added", None, "michael"),   # michael
+        ("actor.added", None, "michael"),   # herdr
+        ("actor.added", None, "michael"),   # worker
         ("config.changed", None, "michael"),
         ("role.set", None, "michael"),
         ("role.set", None, "michael"),
@@ -53,6 +54,7 @@ def test_init_journals_the_seeded_actors_the_default_owner_and_the_seeded_roles(
     assert [json.loads(r["data"]) for r in rows] == [
         {"id": "michael", "kind": "human", "display": "Michael Fork"},
         {"id": "herdr", "kind": "agent", "display": "herdr"},
+        {"id": "worker", "kind": "agent", "display": "worker"},
         {"key": "default-owner", "old": None, "new": "michael"},
         {"role": "product", "old": None, "new": "michael"},
         {"role": "engineering", "old": None, "new": "michael"},

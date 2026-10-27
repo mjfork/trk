@@ -151,7 +151,6 @@ def ff(trk, tmp_path):
     shas["rules"] = commit(r, RULES, "RED src/**\n")
     shas["later"] = commit(r, "src/later.py")
     ok(trk, "init", "--me", "michael")
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     p = ok(trk, "new", "program", "P", *DEST)
     shas["J"] = ok(trk, "new", "project", "J", "--parent", p, "--repo", str(r))
     accept(trk, shas["J"])

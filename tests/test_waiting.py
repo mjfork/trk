@@ -13,7 +13,6 @@ def store(trk, monkeypatch):
     monkeypatch.setenv("TRK_NOW", T0)
     trk("init", "--me", "michael")
     trk("actor", "add", "kim", "--kind", "human", "--display", "Kim")
-    trk("actor", "add", "worker", "--kind", "agent")
     return trk
 
 

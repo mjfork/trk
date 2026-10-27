@@ -274,10 +274,23 @@ install_tool() {
   fi
 }
 
+# A store created before trk registered `worker` has no such actor, and every skill writes `--as worker`,
+# so the first worker claim on it is refused `unknown-actor`. A new store needs nothing: `trk init`
+# registers it. Guarded on absence, so a rerun writes nothing and an actor someone registered under the
+# name is left exactly as it is.
+top_up_worker() {
+  trk actors 2>/dev/null | grep -q '^worker[[:space:]]' && return 0
+  say "registering the 'worker' agent actor (this store predates it)"
+  # As the store's default actor, never as `worker` itself: the row records who registered it.
+  trk actor add worker --kind agent || say "could not register 'worker'; run: trk actor add worker --kind agent"
+}
+
 install_store() {
   say "== store"
   if [[ -e $STORE/store.db ]]; then
     say "store exists at $STORE; leaving it alone"
+    if ((DRY)); then say "[dry-run] register the 'worker' actor if the store has none"
+    else top_up_worker; fi
   else
     say "creating a store at $STORE for actor '$ME'"
     if ((DRY)); then say "[dry-run] trk init --me $ME"
@@ -290,8 +303,9 @@ next_steps() {
 
 == next steps
 1. Make sure `trk` is on your PATH: run `trk --version`. If it is not found, run `uv tool update-shell`.
-2. Register the agent that will work for you, so its writes are not recorded as yours:
-     trk actor add worker --kind agent
+2. The agent actors `worker`, `herdr` and `publisher` are registered for you, so an agent's writes
+   are not recorded as yours. Register any others you need:
+     trk actor add <name> --kind agent
    Check actors and roles with `trk actors` and `trk roles`; reassign a role with
    `trk roles set <role> <actor>`.
    Then read docs/agents.md.

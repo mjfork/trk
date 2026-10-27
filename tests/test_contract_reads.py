@@ -27,7 +27,6 @@ def world(trk, monkeypatch, tmp_path):
     """A store with every item kind and form, sections, edges, a live claim, a handoff, a closed item and an open ask."""
     monkeypatch.setenv("TRK_NOW", T0)
     ok(trk("init", "--me", "michael", "--json"))
-    ok(trk("actor", "add", "worker", "--kind", "agent", "--display", "Worker", "--json"))
     ok(trk("roles", "set", "product", "worker", "--json"))
 
     def new(*argv):

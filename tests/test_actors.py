@@ -91,6 +91,7 @@ def test_actors_json_lists_every_actor_in_registration_order(trk):
         "actors": [
             {"id": "michael", "kind": "human", "display": "Michael"},
             {"id": "herdr", "kind": "agent", "display": "herdr"},
+            {"id": "worker", "kind": "agent", "display": "worker"},
             {"id": "publisher", "kind": "agent", "display": "publisher"},
             {"id": "ana", "kind": "human", "display": "ana"},
         ],
@@ -100,7 +101,8 @@ def test_actors_json_lists_every_actor_in_registration_order(trk):
 def test_actors_human_output_has_one_line_each(trk):
     trk("init", "--me", "michael")
     lines = trk("actors").out.splitlines()
-    assert lines == ["michael  human  michael", "herdr  agent  herdr", "publisher  agent  publisher"]
+    assert lines == ["michael  human  michael", "herdr  agent  herdr", "worker  agent  worker",
+                     "publisher  agent  publisher"]
 
 
 def test_actor_add_refuses_a_duplicate(trk, trk_home):

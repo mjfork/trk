@@ -30,7 +30,7 @@ def as_(session, actor="worker"):
 @pytest.fixture
 def world(trk):
     ok(trk, "init", "--me", "michael")
-    for agent in ("worker", "auditor"):
+    for agent in ("auditor",):   # `worker` comes with the store (trk init)
         ok(trk, "actor", "add", agent, "--kind", "agent")
     p = ok(trk, "new", "program", "P", *DEST)
     j = ok(trk, "new", "project", "J", "--parent", p)

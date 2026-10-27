@@ -290,7 +290,6 @@ def test_a_closed_item_takes_only_review_and_doc_evidence(trk, world):
 
 
 def open_ask(trk, t):
-    ok(trk, "actor", "add", "worker", "--kind", "agent")
     return ok(trk, "ask", t, "--to", "product", "Which?", "--question", f"@{section_file('question')}", "--as", "worker")
 
 

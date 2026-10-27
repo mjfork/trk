@@ -12,7 +12,8 @@ FEED_FIELDS = [
     "seq", "at", "change", "item", "kind", "form", "title", "parent", "root", "depth",
     "actor", "session", "owner", "status_old", "status_new", "data", "addressee", "client",
 ]
-INIT_ROWS = ["actor.added", "actor.added", "config.changed", "role.set", "role.set", "actor.added", "role.set"]
+INIT_ROWS = ["actor.added", "actor.added", "actor.added",  # michael, herdr, worker
+             "config.changed", "role.set", "role.set", "actor.added", "role.set"]
 I = len(INIT_ROWS)  # rows `init` writes; the first item row is seq I + 1
 CREATE_PROGRAM = ["item.created", "criterion.added"]  # a program is created with one destination statement
 P = len(CREATE_PROGRAM)

@@ -46,7 +46,7 @@ def rows(trk, t):
 @pytest.fixture
 def world(trk, tmp_path):
     ok(trk, "init", "--me", "michael")
-    for agent in ("worker", "builder", "reviewer"):
+    for agent in ("builder", "reviewer"):   # `worker` comes with the store (trk init)
         ok(trk, "actor", "add", agent, "--kind", "agent")
     ok(trk, "roles", "set", "engineering", "michael")
     p = ok(trk, "new", "program", "P", *DEST)
