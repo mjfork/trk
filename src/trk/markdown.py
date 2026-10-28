@@ -173,12 +173,13 @@ def _table(lines, i, out):
 
 def _list(lines, i, out):
     """A run of list items (nested by indent), each item's lazy continuation lines folded into it."""
-    entries = []  # [indent, ordered, text]
+    entries = []  # [indent, ordered, text, number (a numbered item's own number, else None)]
     while i < len(lines):
         line = lines[i]
         item = _ITEM.match(line)
         if item:
-            entries.append([len(item.group(1).expandtabs(4)), item.group(2)[0].isdigit(), item.group(3)])
+            number = int(item.group(2)[:-1]) if item.group(2)[0].isdigit() else None
+            entries.append([len(item.group(1).expandtabs(4)), number is not None, item.group(3), number])
         elif line.strip() and not _starts_block(line):
             entries[-1][2] += "\n" + line.strip()
         elif not line.strip() and i + 1 < len(lines) and (
@@ -200,8 +201,12 @@ def _starts_block(line):
 
 
 def _nest(entries, i):
-    indent, ordered = entries[i][0], entries[i][1]
+    indent, ordered, number = entries[i][0], entries[i][1], entries[i][3]
     tag = "ol" if ordered else "ul"
+    # A numbered list keeps the number it starts at in the source. A paragraph between two items ends one
+    # list and starts another, and without this the second would renumber from 1, so "1. … 2. …" read as
+    # "1. … 1. …" on the page.
+    start = f' start="{number}"' if ordered and number != 1 else ""
     items = []
     while i < len(entries) and entries[i][0] >= indent and not (entries[i][0] == indent and entries[i][1] != ordered):
         text = inline(entries[i][2])
@@ -210,4 +215,4 @@ def _nest(entries, i):
             nested, i = _nest(entries, i)
             text += nested
         items.append(f"<li>{text}</li>")
-    return f"<{tag}>{''.join(items)}</{tag}>", i
+    return f"<{tag}{start}>{''.join(items)}</{tag}>", i

@@ -319,6 +319,11 @@ def test_section_markdown_renders_and_raw_html_is_escaped(trk, world):
     ("`<i>` and ``a`b``", "<p><code>&lt;i&gt;</code> and <code>a`b</code></p>"),
     ("1. a\n2. b", "<ol><li>a</li><li>b</li></ol>"),
     ("- a\n1. b", "<ul><li>a</li></ul><ol><li>b</li></ol>"),
+    # A paragraph between two numbered items makes two lists; the second keeps the source's number.
+    ("1. a\n\nwhy not\n\n2. b", '<ol><li>a</li></ol><p>why not</p><ol start="2"><li>b</li></ol>'),
+    ("3. c\n4. d", '<ol start="3"><li>c</li><li>d</li></ol>'),
+    ("1. a\n\n   2. nested\n\n2. b", '<ol><li>a<ol start="2"><li>nested</li></ol></li>'
+                                       '<li>b</li></ol>'),
     ("[x](HTTPS://a.b)", '<p><a href="HTTPS://a.b" target="_blank" rel="noopener">x</a></p>'),
     ("[x](data:text/html,hi)", "<p>[x](data:text/html,hi)</p>"),
     ("[x](/relative)", "<p>[x](/relative)</p>"),
