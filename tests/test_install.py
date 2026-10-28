@@ -1,13 +1,17 @@
 """install.sh in a sandbox: a temp HOME, a temp store, TRK_TEST=1, and a fake `uv` and `systemctl`
 on PATH, so nothing touches this machine's real tool, store, skills, settings or units."""
 
+import fcntl
 import hashlib
 import json
 import os
+import pty
 import sqlite3
 import shutil
 import subprocess
 import sys
+import termios
+import threading
 from pathlib import Path
 
 import pytest
@@ -16,6 +20,7 @@ from trk import timer
 
 REPO = Path(__file__).resolve().parent.parent
 SKILLS = ("trk", "trk-drive-program", "trk-create-program")
+RULE = "Bash(trk *)"            # the one permission rule the installer offers to add
 
 FAKE_UV = r"""#!/usr/bin/env bash
 state=$HOME/.fake-uv-installed
@@ -58,7 +63,10 @@ def box(tmp_path):
     }
 
     def run(*args, check=True):
-        done = subprocess.run([str(REPO / "install.sh"), *args], env=env, capture_output=True, text=True, check=False)
+        # Its own session, so the script has no controlling terminal: a run that would ask takes the
+        # no-terminal path instead of blocking on a question. The tty paths get a pty on purpose.
+        done = subprocess.run([str(REPO / "install.sh"), *args], env=env, capture_output=True, text=True,
+                              check=False, start_new_session=True)
         if check:
             assert done.returncode == 0, (args, done.stdout, done.stderr)
         return done
@@ -329,3 +337,193 @@ def test_a_dry_run_does_not_top_up_the_worker_actor(box):
 
     assert "[dry-run] register the 'worker' actor" in done.stdout
     assert "worker" not in actors_in(store)
+
+
+def allow_rules(home):
+    """`permissions.allow` in the box's settings.json, or None when there is no such list."""
+    path = home / ".claude/settings.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text()).get("permissions", {}).get("allow")
+
+
+def marker(home):
+    return home / ".local/state/trk-install/allow-added"
+
+
+def test_allow_trk_adds_the_permission_rule_and_uninstall_takes_out_its_own(box):
+    first = box("--allow-trk")
+
+    assert RULE in first.stdout and allow_rules(box.home) == [RULE]
+    assert marker(box.home).exists()           # it was this script that added it
+
+    before = snapshot(box.home)
+    again = box("--allow-trk")
+
+    assert "nothing to do" in again.stdout, "a second run asks nothing and writes nothing"
+    assert snapshot(box.home) == before
+
+    box("--uninstall")
+
+    assert "permissions" not in json.loads((box.home / ".claude/settings.json").read_text())
+    assert not marker(box.home).exists()
+
+
+def test_the_rule_joins_an_allow_list_without_disturbing_it(box):
+    path = box.home / ".claude/settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"permissions": {"allow": ["Bash(ls)"], "deny": ["Bash(rm *)"]},
+                                "model": "x"}))
+
+    box("--allow-trk")
+
+    settings = json.loads(path.read_text())
+    assert settings["permissions"] == {"allow": ["Bash(ls)", RULE], "deny": ["Bash(rm *)"]}
+    assert settings["model"] == "x"
+    assert list(path.parent.glob("settings.json.trk-bak-*"))     # backed up before the merge
+
+    box("--uninstall")
+
+    settings = json.loads(path.read_text())
+    assert settings["permissions"] == {"allow": ["Bash(ls)"], "deny": ["Bash(rm *)"]}
+
+
+def test_no_allow_trk_leaves_the_rule_out_and_says_how_to_add_it(box):
+    done = box("--no-allow-trk")
+
+    assert allow_rules(box.home) is None
+    assert "leaving permissions.allow alone" in done.stdout
+    assert "./install.sh --allow-trk" in done.stdout
+    assert not marker(box.home).exists()
+
+
+def test_a_run_with_no_terminal_to_ask_on_skips_the_rule(box):
+    done = box()        # the fixture gives it its own session, so there is no /dev/tty to ask on
+
+    assert allow_rules(box.home) is None
+    assert "no terminal to ask on" in done.stdout
+    assert "./install.sh --allow-trk" in done.stdout
+    assert not marker(box.home).exists()
+
+
+def test_a_rule_this_script_did_not_add_is_left_alone(box):
+    path = box.home / ".claude/settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"permissions": {"allow": [RULE]}}))
+
+    done = box()
+
+    assert "nothing to do" in done.stdout
+    assert not marker(box.home).exists()
+
+    removed = box("--uninstall")
+
+    assert "not added by this script" in removed.stdout
+    assert allow_rules(box.home) == [RULE]
+
+
+def test_a_dry_run_never_asks_and_writes_nothing_either_way(box):
+    path = seed_settings(box.home)
+    before = snapshot(box.home)
+
+    asked = box("--dry-run")
+
+    assert "a dry run never asks" in asked.stdout and snapshot(box.home) == before
+
+    allowed = box("--dry-run", "--allow-trk")
+
+    assert f'[dry-run] add "{RULE}"' in allowed.stdout and snapshot(box.home) == before
+
+    declined = box("--dry-run", "--no-allow-trk")
+
+    assert "--no-allow-trk: leaving permissions.allow alone" in declined.stdout
+    assert snapshot(box.home) == before
+    assert "permissions" not in json.loads(path.read_text())
+
+
+def test_permissions_the_file_shapes_some_other_way_stop_the_step(box):
+    path = box.home / ".claude/settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"permissions": {"allow": "Bash(ls)"}}))
+
+    done = box("--allow-trk", check=False)
+
+    assert done.returncode != 0
+    assert "not a JSON array" in done.stderr
+    assert json.loads(path.read_text())["permissions"] == {"allow": "Bash(ls)"}
+
+
+def on_a_terminal(box, args, typed, piped=None):
+    """install.sh with a controlling terminal of its own: `typed` is answered at the terminal, and
+    `piped`, when given, goes to stdin instead -- the shape `curl ... | bash` runs the script in."""
+    master, slave = pty.openpty()
+    if piped is None:
+        pre, stdin = (lambda: os.login_tty(slave)), slave
+    else:   # a session leader with the pty as its controlling terminal, but a pipe on stdin
+        pre, stdin = (lambda: (os.setsid(), fcntl.ioctl(slave, termios.TIOCSCTTY, 0))), subprocess.PIPE
+    done = subprocess.Popen([str(REPO / "install.sh"), *args], env=box.env, stdin=stdin, stdout=slave,
+                            stderr=slave, preexec_fn=pre, pass_fds=(slave,))
+    os.close(slave)
+    chunks = []
+
+    def drain():
+        while True:
+            try:
+                data = os.read(master, 4096)
+            except OSError:         # the child let go of the pty
+                return
+            if not data:
+                return
+            chunks.append(data)
+
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+    try:
+        os.write(master, typed)
+        if piped is not None:
+            done.stdin.write(piped)
+            done.stdin.close()
+        code = done.wait(timeout=120)
+    except subprocess.TimeoutExpired:
+        done.kill()
+        raise AssertionError("install.sh did not finish; it is waiting for something")
+    finally:
+        reader.join(timeout=5)
+        os.close(master)
+    return code, b"".join(chunks).decode(errors="replace")
+
+
+def test_the_question_is_asked_on_the_terminal_and_a_yes_adds_the_rule(box):
+    code, out = on_a_terminal(box, [], b"y\n")
+
+    assert code == 0, out
+    assert "Allow trk commands" in out and RULE in out
+    assert allow_rules(box.home) == [RULE]
+    assert marker(box.home).exists()
+
+
+def test_enter_at_the_question_leaves_the_rule_out(box):
+    code, out = on_a_terminal(box, [], b"\n")
+
+    assert code == 0, out
+    assert "Allow trk commands" in out
+    assert "leaving permissions.allow alone" in out
+    assert allow_rules(box.home) is None and not marker(box.home).exists()
+
+
+def test_the_answer_is_read_from_the_terminal_not_from_stdin(box):
+    """Under `curl | bash` stdin is the script itself, so an answer may never be taken from it."""
+    code, out = on_a_terminal(box, [], b"n\n", piped=b"y\ny\ny\n")
+
+    assert code == 0, out
+    assert "Allow trk commands" in out
+    assert allow_rules(box.home) is None, "the 'n' at the terminal decided it, not the 'y' on stdin"
+    assert not marker(box.home).exists()
+
+
+def test_help_prints_the_options_and_exits_zero(box):
+    """The catch-all case used to swallow -h and --help, so the help printed and the script failed."""
+    done = box("--help")
+
+    assert "--allow-trk" in done.stdout and "make-bundle" in done.stdout
+    assert box("-h").stdout == done.stdout

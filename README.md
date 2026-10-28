@@ -72,8 +72,9 @@ The installer does these steps. Every step skips itself when its work is already
 3. Creates the store with `trk init` if none exists. It never touches an existing store. Pass `--me NAME` to choose the actor id for yourself; the default is your user name.
 4. Copies the three Claude Code skills from `skills/` into `~/.claude/skills`. If an installed skill differs from the repo copy, it stops and changes nothing; `--force` replaces it and keeps the old copy aside.
 5. Adds three hook entries to `~/.claude/settings.json`. It backs the file up first, shows you the diff, and leaves every other setting alone.
-6. With `--pages`, installs and starts the page publisher's timer. See [Publishing pages](#publishing-pages-optional).
-7. Prints the next steps.
+6. Asks whether to allow trk commands without a prompt, by adding one rule, `Bash(trk *)`, to `permissions.allow` in that same file. Without it a Claude Code session asks before every trk command. It asks on your terminal, and adds nothing unless you say yes. `--allow-trk` adds it without asking, `--no-allow-trk` skips the question, and a run with no terminal (a piped installer) skips the rule and prints how to add it later.
+7. With `--pages`, installs and starts the page publisher's timer. See [Publishing pages](#publishing-pages-optional).
+8. Prints the next steps.
 
 The installer never reads, prints or stores a token. Run `./install.sh --help` for every option. [docs/install.md](docs/install.md) explains each step in detail.
 

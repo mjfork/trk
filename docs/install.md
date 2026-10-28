@@ -30,7 +30,7 @@ To bring a later version over, make a new bundle and run `git pull ../trk.bundle
 ## What install.sh does
 
 ```text
-./install.sh [--dry-run] [--no-editable] [--force] [--pages] [--me NAME]
+./install.sh [--dry-run] [--no-editable] [--force] [--pages] [--me NAME] [--allow-trk|--no-allow-trk]
 ./install.sh --uninstall [--dry-run]
 ./install.sh make-bundle [--all-branches] [FILE]
 ```
@@ -82,13 +82,28 @@ Because the entries hold the checkout's absolute path, moving the checkout break
 
 Restart Claude Code after the merge. It reads settings when a session starts.
 
-### 6. The page publisher timer (`--pages`)
+### 6. The trk permission rule
+
+Claude Code asks before each Bash command a session runs, unless a rule in `permissions.allow` covers it. Without one, a session working in trk stops at every `trk` command. The script offers to add exactly one rule, `Bash(trk *)`, to `~/.claude/settings.json`:
+
+- It asks on your terminal (`/dev/tty`), never on standard input, so the question still reaches you when the script is piped into a shell. Anything but `y` or `yes` means no.
+- `--allow-trk` adds the rule with no question. `--no-allow-trk` leaves `permissions.allow` alone and asks nothing. An installer that asks the question itself passes one of these.
+- A run with no terminal to ask on adds nothing and prints how to add it later. So does a no, and so does `--no-allow-trk`.
+- If the rule is already there, the script says so and writes nothing.
+- `--dry-run` never asks. It reports what a real run would do, or that the rule is already there.
+- The merge works like the hooks merge: it backs the file up, prints the diff, keeps every other setting, and stops without changing anything if `settings.json` is not valid JSON, or if `permissions` is not an object or `permissions.allow` is not an array.
+
+When the script adds the rule, it records that in `~/.local/state/trk-install/allow-added`. `--uninstall` removes the rule only if that file exists, so a rule you added yourself stays. Restart Claude Code for the rule to take effect.
+
+The rule covers `trk` and nothing else. It does not widen what trk itself may do; it only stops the prompt. If you would rather decide each time, answer no.
+
+### 7. The page publisher timer (`--pages`)
 
 This step is off unless you pass `--pages`. It writes `trk-pages.service` and `trk-pages.timer` into `~/.config/systemd/user` from the templates in `systemd/`, then runs `systemctl --user daemon-reload` and `systemctl --user enable --now trk-pages.timer`. The service runs the installed `trk pages tick`. If `$TRK_HOME` is set, the service sets it too. On macOS, which has no systemd, it runs `trk pages timer install`, which writes and loads a launchd agent instead. Read [operations.md](operations.md) before you turn this on, because publishing also needs `trk pages setup`.
 
 `trk pages timer install` does the same job without the script.
 
-### 7. Next steps
+### 8. Next steps
 
 The script prints what to do next: check actors and roles, restart Claude Code, set up publishing if you want it, and try the quickstart.
 
@@ -104,11 +119,11 @@ trk init --me <you>                  # the store, once
 cp -R skills/* ~/.claude/skills/     # the skills
 ```
 
-Then add the entries from `hooks/settings-snippet.json` to `~/.claude/settings.json`. Replace `<TRK_REPO>` in the snippet with the absolute path of your checkout.
+Then add the entries from `hooks/settings-snippet.json` to `~/.claude/settings.json`. Replace `<TRK_REPO>` in the snippet with the absolute path of your checkout. To skip the per-command prompt, put `"Bash(trk *)"` in that file's `permissions.allow` as well.
 
 ## Uninstalling
 
-`./install.sh --uninstall` removes the timer units, the skills that still match the repo copy, the hook entries it added and the `trk` command, if this script installed it. It leaves the store. It leaves an edited skill alone and says so. Use `--dry-run` to look first.
+`./install.sh --uninstall` removes the timer units, the skills that still match the repo copy, the hook entries it added, the `Bash(trk *)` permission rule if this script added it, and the `trk` command, if this script installed it. It leaves the store. It leaves an edited skill alone and says so. Use `--dry-run` to look first.
 
 ## Testing the installer
 

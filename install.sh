@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install trk from this checkout, or remove it again. Safe to re-run.
 #
-#   ./install.sh [--dry-run] [--no-editable] [--force] [--pages] [--me NAME]
+#   ./install.sh [--dry-run] [--no-editable] [--force] [--pages] [--me NAME] [--allow-trk|--no-allow-trk]
 #   ./install.sh --uninstall [--dry-run]
 #   ./install.sh make-bundle [--all-branches] [FILE]
 #
@@ -14,6 +14,8 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 SKILLS=(trk trk-drive-program trk-create-program)
 
 DRY=0 ALL_BRANCHES=0 UNINSTALL=0 EDITABLE=1 FORCE=0 PAGES=0 ME=${USER:-$(id -un)} MODE=install BUNDLE=
+# ask: a real run asks on the terminal; 1: --allow-trk, 0: --no-allow-trk. A dry run never asks.
+ALLOW=ask
 
 usage() {
   cat <<'EOF'
@@ -21,7 +23,8 @@ Usage: install.sh [options]
        install.sh make-bundle [--all-branches] [FILE]
 
 Installs trk from this checkout: the `trk` command (with uv), a store if none exists, the three
-Claude Code skills, and the session hooks in ~/.claude/settings.json.
+Claude Code skills, and the session hooks in ~/.claude/settings.json. It also offers to allow trk
+commands without a prompt, by adding one rule to permissions.allow in that same file.
 
 Options:
   --dry-run       print what would happen and change nothing
@@ -30,6 +33,10 @@ Options:
   --force         reinstall the trk command even if uv already has it, and replace skills that
                   differ from the repo copy (the old ones are kept as ~/.local/share/trk-skill-backups/)
   --pages         also install and enable the page publisher's systemd user timer
+  --allow-trk     add the permission rule "Bash(trk *)" to ~/.claude/settings.json, no question asked
+  --no-allow-trk  leave permissions.allow alone, and do not ask
+                  With neither flag, a real run asks on the terminal (never on stdin, so it works
+                  under `curl | bash`); with no terminal it skips the rule and says how to add it.
   --me NAME       the person's actor id for a new store (default: your user name)
   -h, --help      show this help
 
@@ -58,11 +65,13 @@ while (($#)); do
     --no-editable) EDITABLE=0 ;;
     --force) FORCE=1 ;;
     --pages) PAGES=1 ;;
+    --allow-trk) ALLOW=1 ;;
+    --no-allow-trk) ALLOW=0 ;;
     --me) shift; [[ $# -gt 0 ]] || die "--me needs a name"; ME=$1 ;;
     make-bundle) MODE=bundle; if [[ ${2:-} != "" && ${2:-} != -* ]]; then BUNDLE=$2; shift; fi ;;
     --all-branches) ALL_BRANCHES=1 ;;
-    *) if [[ $MODE == bundle && -z $BUNDLE && $1 != -* ]]; then BUNDLE=$1; else usage >&2; die "unknown option: $1"; fi ;;
     -h | --help) usage; exit 0 ;;
+    *) if [[ $MODE == bundle && -z $BUNDLE && $1 != -* ]]; then BUNDLE=$1; else usage >&2; die "unknown option: $1"; fi ;;
   esac
   shift
 done
@@ -76,6 +85,10 @@ UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 STORE=${TRK_HOME:-$HOME/.local/share/trk}
 # Written only when this script installs the uv tool, so --uninstall removes only what it added.
 MARKER=${XDG_STATE_HOME:-$HOME/.local/state}/trk-install/tool-installed
+# One Claude Code permission rule: without it a session asks before every trk command. Added only on a
+# yes, and the marker is written only when this script added it, so --uninstall removes only its own.
+ALLOW_RULE='Bash(trk *)'
+ALLOW_MARKER=${XDG_STATE_HOME:-$HOME/.local/state}/trk-install/allow-added
 
 default_branch() { # origin's default branch, else main, else master
   local b
@@ -175,6 +188,61 @@ settings_cmd() { # add|remove
   local flags=()
   ((DRY)) && flags+=(--dry-run)
   "$PY" "$REPO/scripts/merge_settings.py" "$1" --settings "$SETTINGS" --repo "$REPO" ${flags[@]+"${flags[@]}"}
+}
+
+allow_by_hand() {
+  say "To allow them later: ./install.sh --allow-trk"
+  say "  or add \"$ALLOW_RULE\" to permissions.allow in $SETTINGS yourself"
+}
+
+install_allow() {
+  say "== trk permission rule"
+  local state reply
+  state=$(settings_cmd allow-status)
+  if [[ $state == present ]]; then
+    say "permissions.allow already has \"$ALLOW_RULE\"; nothing to do"
+    return
+  fi
+  if ((DRY)); then
+    case $ALLOW in
+      1) say "[dry-run] add \"$ALLOW_RULE\" to permissions.allow in $SETTINGS" ;;
+      0) say "[dry-run] --no-allow-trk: leaving permissions.allow alone" ;;
+      *) say "[dry-run] a real run would ask whether to add \"$ALLOW_RULE\" to permissions.allow; a dry run never asks" ;;
+    esac
+    return
+  fi
+  if [[ $ALLOW == ask ]]; then
+    # The question goes to the terminal, never to stdin: under `curl | bash` stdin is the script itself.
+    # /dev/tty is there even with no controlling terminal, and only opening it says whether one is
+    # (macOS: "Device not configured"), so the test is the open itself, in a subshell, quietly.
+    if (exec 3<>/dev/tty) 2>/dev/null; then
+      printf '%s' "Allow trk commands in Claude Code without a prompt each time? This adds \"$ALLOW_RULE\" to permissions.allow in $SETTINGS. [y/N] " >/dev/tty
+      read -r reply </dev/tty || reply=
+      if [[ $reply == [yY] || $reply == [yY][eE][sS] ]]; then ALLOW=1; else ALLOW=0; fi
+    else
+      say "no terminal to ask on, so leaving permissions.allow alone"
+      allow_by_hand
+      return
+    fi
+  fi
+  if ((ALLOW)); then
+    settings_cmd allow-add
+    mkdir -p "$(dirname "$ALLOW_MARKER")" && printf '%s\n' "$ALLOW_RULE" >"$ALLOW_MARKER"
+    say "trk commands will not be asked about again. Restart Claude Code for it to take effect."
+  else
+    say "leaving permissions.allow alone"
+    allow_by_hand
+  fi
+}
+
+uninstall_allow() {
+  say "== trk permission rule"
+  if [[ ! -e $ALLOW_MARKER ]]; then
+    say "the rule was not added by this script; leaving permissions.allow alone"
+    return
+  fi
+  settings_cmd allow-remove
+  act rm -f "$ALLOW_MARKER"
 }
 
 render_units() { # prints the service unit with the installed trk path
@@ -324,6 +392,7 @@ if ((UNINSTALL)); then
   uninstall_skills
   say "== hooks"
   settings_cmd remove
+  uninstall_allow
   say "== trk command"
   if [[ ! -e $MARKER ]]; then
     say "trk was not installed by this script; leaving the command alone (remove it with: uv tool uninstall trk)"
@@ -345,5 +414,6 @@ install_skills
 report_guidance
 say "== hooks"
 settings_cmd add
+install_allow
 ((PAGES)) && install_units
 ((DRY)) || next_steps
