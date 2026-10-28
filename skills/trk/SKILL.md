@@ -202,11 +202,14 @@ GREEN need no brief.
 
 - Write the six spec sections and at least one end-to-end `criterion add`.
 - Acceptance is a judgment from a session that wrote none of the spec (trk refuses the writer's own, rule
-  `not-independent`; an agent needs a session for the check, `session-required`). The same holds for
-  `advance --judgment` on a self-contained ticket: `evidence add
-  <project> --kind judgment --gate accept --verdict pass --note "<review
-  summary>"`, then `trk spec accept <project>`. Its Framed tickets move to
-  Spec'd. `trk spec draft <project> --reason …` sends it back.
+  `not-independent`; an agent needs a session for the check, `session-required`).
+  That judging session records it with `evidence add <project> --kind judgment
+  --gate accept --verdict pass --note "<review summary>"`, and then `trk spec
+  accept <project>`. Its Framed tickets move to Spec'd. `trk spec draft
+  <project> --reason …` sends it back.
+- The same independence holds for `advance --judgment` on a self-contained
+  ticket, which carries its own spec: the session that wrote that spec cannot
+  judge it either.
 - Cut tickets only after acceptance; create them all, then wire `blocks` edges
   in a second pass.
 - **Cut them as vertical slices.** This is the default, and the shape
