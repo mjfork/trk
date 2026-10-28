@@ -138,8 +138,10 @@ def withdraw(tx, raw_id, raw_n, reason):
     or tied ask (`ledger-judged`: it has been looked at, and withdrawing it would dodge that), a row another
     row corrects or repeats (`ledger-cited`) and a row already withdrawn (`ledger-withdrawn`). By writer:
     the builder withdraws only rows its own session wrote (`not-own-row`) and only before any audit has begun
-    (`ledger-audited`; an auditor's row is `not-independent`); a session that holds or ever held a claim on
-    the ticket counts as the builder, at any stage; an auditor's row (origin `auditor`, or a reward-hacking flag) is withdrawn only by the
+    (`ledger-audited`, whose advice names the ways on for a driver that claimed the ticket and so counts as a
+    builder: an independent session's `ledger verdict` then `ledger settle`, or a withdraw from a third
+    session that neither built nor audited the ticket; an auditor's row is `not-independent`); a session that
+    holds or ever held a claim on the ticket counts as the builder, at any stage; an auditor's row (origin `auditor`, or a reward-hacking flag) is withdrawn only by the
     session that wrote it, or by a person (`not-own-row`); an auditor withdraws only its own rows
     (`not-own-row`); any other session that never built the ticket (the driver) withdraws a builder's row, and
     a person withdraws any row. The builder's session still counts as the builder after its row is withdrawn.
@@ -164,8 +166,16 @@ def withdraw(tx, raw_id, raw_n, reason):
             raise refused("not-independent", f"{tx.actor} built {row['id']}; withdrawing an auditor row needs an "
                           "independent session", item=row["id"])
         if _audit_begun(conn, row["id"]):
-            raise refused("ledger-audited", f"{row['id']} has been audited; the builder can no longer withdraw "
-                          f"{handle(n)}: ask the driver", item=row["id"])
+            # The advice has to be runnable by whoever reads it. "Ask the driver" was not: a driver that
+            # claimed the ticket to record a merge counts as a builder here, so it was being sent to itself.
+            raise refused("ledger-audited", f"{row['id']} has been audited, so {handle(n)} is no longer yours to "
+                          f"take out: a session that built the ticket cannot remove a row an auditor has read (a "
+                          f"driver that claimed the ticket to record a merge counts as one that built it). Judge it "
+                          f"where it stands instead, from a session that did not build it: `trk ledger verdict "
+                          f"{row['id']} {n} wrong --note \"superseded by …\"`, then `trk ledger settle {row['id']} "
+                          f"{n} <settlement>`, which keeps the audit history and is what Merged asks for either "
+                          f"way. Withdrawing it now takes a third session, one that neither built nor audited this "
+                          f"ticket.", item=row["id"])
         if entry["session"] != tx.session:
             raise refused("not-own-row", f"session {tx.session} built {row['id']}; the builder withdraws only rows "
                           f"its own session wrote, and {handle(n)} is not its own", item=row["id"])

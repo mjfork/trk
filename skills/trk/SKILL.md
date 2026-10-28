@@ -137,7 +137,13 @@ stage and refuses with the missing list otherwise.
   out with `trk ledger withdraw <id> <n> --reason "…"`: never a row that has a
   verdict, settlement, promotion, ask or a row correcting it. The builder (any
   session that holds or ever held a claim on the ticket counts) withdraws only
-  rows its own session wrote, and only before any audit has begun; an auditor only its own
+  rows its own session wrote, and only before any audit has begun. After that a
+  superseded row is judged where it stands rather than removed: an independent
+  session records `ledger verdict <id> <n> wrong --note "superseded by …"` and then
+  `ledger settle <id> <n> <settlement>`, which is what Merged asks for anyway; a
+  withdraw after an audit takes a third session, one that neither built nor audited
+  the ticket. A driver that claimed the ticket to record a merge counts as a builder,
+  so neither is its own session to run; an auditor only its own
   rows; the driver (a session that never built the ticket) a builder's row,
   never an auditor's finding (an auditor row or a reward-hack flag); a person
   any unjudged row. A withdrawn row stays listed, marked

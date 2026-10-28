@@ -7,6 +7,7 @@ Sessions: W builds, X is another. A write with no session (a person's terminal) 
 import pytest
 
 from gated import DEST, accepting, ticket
+from test_ledger import rows
 
 W = "11111111-1111-1111-1111-111111111111"
 X = "22222222-2222-2222-2222-222222222222"
@@ -244,6 +245,28 @@ def test_the_builder_withdraws_only_before_any_audit(trk, world):
     ok(trk, "ledger", "audit", t, "--note", "audited", *as_(X, "auditor"))
     error = refusal(trk, "ledger", "withdraw", t, "2", "--reason", "dodge", *as_(W))
     assert error["rule"] == "ledger-audited"
+
+
+def test_the_audited_refusal_names_a_path_its_reader_can_run(trk, world):
+    """The advice used to read "ask the driver", and a driver that had claimed the ticket to record a merge
+    counts as a builder here, so it was sent to itself with nothing to run."""
+    t = new_ticket(trk, world)
+    ok(trk, "claim", t, *as_(W))
+    ok(trk, *WRITES["ledger"](t), *as_(W))
+    ok(trk, *WRITES["pr"](t), *as_(W))
+    ok(trk, "ledger", "audit", t, "--note", "audited", *as_(X, "auditor"))
+    error = refusal(trk, "ledger", "withdraw", t, "1", "--reason", "superseded", *as_(W))
+    assert error["rule"] == "ledger-audited" and "ask the driver" not in error["message"]
+    assert f"trk ledger verdict {t} 1 wrong" in error["message"]
+    assert "third session, one that neither built nor audited" in error["message"]
+    # Both ways it names, run for real. The verdict, from the session that audited it.
+    ok(trk, "ledger", "verdict", t, "1", "wrong", "--note", "superseded by the new approach", *as_(X, "auditor"))
+    assert rows(trk, t)[0]["verdict"]["verdict"] == "wrong"
+    # And the withdraw, from a third session: ledger-2, which has no verdict of its own, stands in for it.
+    third = "55555555-5555-5555-5555-555555555555"
+    ok(trk, *WRITES["ledger"](t), *as_(W))
+    ok(trk, "ledger", "withdraw", t, "2", "--reason", "superseded", *as_(third, "michael"))
+    assert rows(trk, t)[1]["withdrawn"]["reason"] == "superseded"
 
 
 def test_a_verdict_also_ends_the_builders_window(trk, world):
