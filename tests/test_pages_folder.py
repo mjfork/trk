@@ -3,15 +3,24 @@
 adapter runs as a real child process, as trk runs any adapter."""
 
 import json
+import os
 import re
 import shlex
 import sys
 
 import pytest
 
-from test_pages_setup import ME, journal, tree  # noqa: F401 (fixtures)
+from test_pages_renewal import question, renewal_asks
+from test_pages_setup import ME, journal, meta, tree  # noqa: F401 (fixtures)
 from trk import adapter, folder, publisher
 from trk.top import KEY as TOP
+
+# An adapter that answers `describe` and `check` and nothing else: enough for setup, so a test can take it
+# away afterwards and see what a tick does when the command cannot be started.
+PROBE = """import json, sys
+json.loads(sys.stdin.read() or "{}")
+print(json.dumps({"protocol": 1, "name": "probe", "capabilities": []} if sys.argv[1] == "describe" else {}))
+"""
 
 
 def command(out, *extra):
@@ -57,6 +66,46 @@ def test_a_folder_adapter_without_a_directory_is_refused(trk, tree):
                  "--json")
     assert result.code == 1 and result.error()["rule"] == "adapter-check-failed"
     assert "--dir" in result.error()["message"]
+
+
+@pytest.fixture
+def on_path(tmp_path, monkeypatch):
+    """PROBE as an executable named by bare command, with its directory on PATH: (the script's path)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "probe-adapter"
+    script.write_text(f"#!{sys.executable}\n{PROBE}")
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return script
+
+
+def test_setup_stores_the_resolved_path_so_a_timer_without_it_on_path_still_runs_it(trk, trk_home, tree, on_path,
+                                                                                   monkeypatch):
+    """The reported bug: a bare command works in a shell, and every timed tick fails to start it, because a
+    systemd user unit or a launchd job has no ~/.local/bin on PATH."""
+    first = trk("pages", "setup", "--adapter", "probe-adapter", "--home", tree["P"], "--json")
+    assert first.code == 0, first.err
+    assert meta(trk_home, "publish_adapter") == str(on_path)  # absolute, not "probe-adapter"
+    assert first.json()["adapter"] == str(on_path)
+
+    monkeypatch.setenv("PATH", f"/usr/bin{os.pathsep}/bin")  # the timer's PATH, without the adapter's dir
+    again = trk("pages", "setup", "--home", tree["P"], "--json")
+    assert again.code == 0, again.err  # the stored command runs anywhere
+
+
+def test_an_adapter_that_cannot_be_started_says_so_in_the_ask(trk, trk_home, tree, on_path):
+    """A spawn failure is exit 2, like a rejected credential, and the ask used to call it one: the person was
+    told to renew credentials when the command was simply not there."""
+    assert trk("pages", "setup", "--adapter", "probe-adapter", "--home", tree["P"], "--json").code == 0
+    on_path.unlink()
+    report = trk("pages", "flush", "--now", "--json")
+    assert report.json()["held"] is True
+    (ask,) = renewal_asks(trk_home)
+    text = question(trk_home, ask["id"])
+    assert "could not start the page adapter" in text and f"cannot run {on_path}" in text
+    assert "credentials were rejected" not in text
+    assert str(on_path) in text  # the setup command to run once it is back
 
 
 def test_a_program_that_cannot_run_is_refused(trk, tree):

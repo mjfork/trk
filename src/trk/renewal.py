@@ -29,6 +29,9 @@ EXPIRES_SOON, NO_PERMISSION = "expires-soon", "ask-permission"
 
 ASK_KEY = "publish_renewal_ask"
 REJECTED_KEY = "publish_token_rejected"
+# Set beside REJECTED_KEY when trk could not start the adapter at all (`Held.cannot_run`), so the ask says
+# so instead of blaming credentials. Only trk's own words are kept here: the ask's question is published.
+CANNOT_RUN_KEY = "publish_adapter_cannot_run"
 OLD_SUFFIX = "the page backend rejected the token (HTTP 401)"  # a hold's last_error from before adapters
 
 
@@ -58,17 +61,25 @@ def check(st, client):
     return {"held": False, "renewal_ask": None}
 
 
-def rejected(st, client):
+def rejected(st, client, exc=None):
     """An exit 2 from `client`: hold every page write and make sure the ask is open. Returns the report
     fields as `check`. When a setup has run since `client` was made, nothing is held and no ask opens,
     so a setup that committed during the run is never undone by the old setup's refusal; the next run
-    tries the new one."""
+    tries the new one.
+
+    `exc` is the `Held` that was raised, where the caller has it: a spawn failure's own message goes into
+    the ask, so a command the timer cannot run is not reported as a credentials problem."""
     from . import pages  # pages imports this module
 
+    cannot_run = getattr(exc, "cannot_run", None)
     with st.write_lock():
         if client.setup_id != st.meta(pages.SETUP_KEY):
             return {"held": held(st), "renewal_ask": _open_ask(st.conn, st.meta(ASK_KEY))}
         _set_meta(st.conn, REJECTED_KEY, clock.stamp(clock.now()))
+        if cannot_run:
+            _set_meta(st.conn, CANNOT_RUN_KEY, cannot_run)
+        else:
+            st.conn.execute("DELETE FROM meta WHERE key = ?", (CANNOT_RUN_KEY,))
     return {"held": True, **ensure_ask(st, token_rejected=True)}
 
 
@@ -92,16 +103,25 @@ def ensure_ask(st, *, token_rejected):
 
 
 def question(st, *, token_rejected):
-    """The ask's question: why it opened, the expiry date and the setup command."""
+    """The ask's question: why it opened, what trk could not run where that is the cause, the expiry date
+    and the setup command."""
     expires = st.meta("publish_expires")
     command = st.meta("publish_adapter")
-    why = ("The page adapter refused (exit 2): its credentials were rejected, or a permission or its "
-           "configuration is wrong. Page writes are held until setup succeeds; the pages stay dirty meanwhile."
-           + (f" Its credentials were set to expire on {expires}." if expires else "")
-           if token_rejected else f"The page adapter's credentials expire on {expires}.")
+    cannot_run = st.meta(CANNOT_RUN_KEY)
+    if not token_rejected:
+        why = f"The page adapter's credentials expire on {expires}."
+    elif cannot_run:
+        why = (f"trk could not start the page adapter, so every page write is held (exit 2): "
+               f"{cannot_run.rstrip('.')}. The command may be right in a shell and wrong for the timer, which "
+               f"runs with a bare PATH: setup stores the resolved path of the adapter it checked, so running "
+               f"setup again where the command works is usually the fix.")
+    else:
+        why = ("The page adapter refused (exit 2): its credentials were rejected, or a permission or its "
+               "configuration is wrong. Page writes are held until setup succeeds; the pages stay dirty meanwhile."
+               + (f" Its credentials were set to expire on {expires}." if expires else ""))
     return (f"{why}\n\n"
-            f"Fix or renew them where the adapter keeps them (`trk pages --errors` shows its last message), "
-            f"then run:\n\n"
+            f"Put that right where the adapter keeps it, or fix the command so it can run "
+            f"(`trk pages --errors` shows its last message), then run:\n\n"
             f"    trk pages setup --adapter {shlex.quote(command or 'COMMAND')} --home {st.meta('publish_home')}\n\n"
             f"Setup checks the adapter and answers this ask; the next tick catches every page up.\n")
 
@@ -120,7 +140,7 @@ def on_setup(tx, actor, expires):
         for suffix in (Held.SUFFIX, OLD_SUFFIX):
             conn.execute("UPDATE pages SET last_error = NULL, last_error_at = NULL WHERE last_error LIKE ?",
                          (f"%{suffix}",))
-    conn.execute("DELETE FROM meta WHERE key = ?", (REJECTED_KEY,))
+    conn.execute("DELETE FROM meta WHERE key IN (?, ?)", (REJECTED_KEY, CANNOT_RUN_KEY))
     ask_id = _open_ask(conn, tx.store.meta(ASK_KEY))
     if ask_id is None:
         return None

@@ -45,9 +45,18 @@ class ServiceError(Exception):
 
 class Held(ServiceError):
     """The adapter refuses every call until it is fixed: its credentials were rejected (revoked,
-    expired, mistyped), or a permission or its configuration is wrong. Exit 2."""
+    expired, mistyped), or a permission or its configuration is wrong. Exit 2.
+
+    `cannot_run` holds the message when trk could not start the adapter at all, which is the one exit 2
+    whose words trk wrote itself (from the OSError and the command) rather than read from the adapter's
+    stderr. That is why the renewal ask may quote it: the ask's question is published, and nothing an
+    adapter printed goes on a page."""
 
     SUFFIX = "the page adapter is held (exit 2)"  # ends every page's last_error it causes
+
+    def __init__(self, message, *, cannot_run=None):
+        super().__init__(message)
+        self.cannot_run = cannot_run
 
 
 class HttpFailure(ServiceError):

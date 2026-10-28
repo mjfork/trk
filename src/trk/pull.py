@@ -97,8 +97,8 @@ def pull(st, client):
     try:
         with pages_lock(st):
             _pass(st, client, report)
-    except publisher.Held:
-        report.update(renewal.rejected(st, client))
+    except publisher.Held as exc:
+        report.update(renewal.rejected(st, client, exc))
     return report
 
 
@@ -742,8 +742,8 @@ def tidy(st, client, key, *, dry_run=False):
     try:
         with pages_lock(st):
             _tidy(st, client, page, report, dry_run)
-    except publisher.Held:
-        report.update(renewal.rejected(st, client))
+    except publisher.Held as exc:
+        report.update(renewal.rejected(st, client, exc))
     return report
 
 

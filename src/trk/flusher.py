@@ -63,7 +63,12 @@ PUBLISHED, UPDATED, UNCHANGED, FAILED = OUTCOMES = ("published", "updated", "unc
 
 
 class _Stop(Exception):
-    """The token was rejected: the run ends, and every page stays dirty."""
+    """The adapter is held: the run ends, and every page stays dirty. It carries the `Held` it came from,
+    so the renewal ask can say what trk could not run."""
+
+    def __init__(self, held=None):
+        super().__init__()
+        self.held = held
 
 
 @contextmanager
@@ -104,8 +109,8 @@ def _flush(st, client, report, *, now_all, only):
                     failed.add(item_id)
                 if outcome is not None:
                     report[outcome].append(item_id)
-    except _Stop:
-        report.update(renewal.rejected(st, client))
+    except _Stop as stop:
+        report.update(renewal.rejected(st, client, stop.held))
         return False
     return True
 
@@ -212,7 +217,7 @@ def _send(st, client, item_id, *, now_all, failed_replies):
             return _update(st, client, item_id, page, title, html, hashes)
         except publisher.Held as exc:
             _failed(st, item_id, str(exc))
-            raise _Stop() from None
+            raise _Stop(exc) from None
         except publisher.ServiceError as exc:
             _failed(st, item_id, str(exc))
             return FAILED
@@ -383,7 +388,7 @@ def republish(st, client, item_id):
                 version = _send_change(client, page, html, pages.WHOLE, title)
         except publisher.Held as exc:
             _failed(st, item_id, str(exc))
-            ask = renewal.rejected(st, client)["renewal_ask"]
+            ask = renewal.rejected(st, client, exc)["renewal_ask"]
             raise refused("republish-failed", f"republishing {item_id} failed: {exc}; renewal ask: "
                                               f"{ask or 'none opened'}", item=item_id) from None
         except publisher.ServiceError as exc:

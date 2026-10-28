@@ -38,6 +38,7 @@ WRITES = frozenset({"publish", "update", "reply"})
 OK, HELD, UNAVAILABLE, REFUSED = 0, 2, 3, 4
 TIMEOUT_SECONDS = 300
 MAX_DETAIL = 300  # characters of the adapter's stderr kept in an error
+CANNOT_RUN = "cannot run "  # how the runner reports an OSError: trk's own words, not the adapter's
 
 
 class Unavailable(ServiceError):
@@ -53,7 +54,7 @@ def subprocess_runner(argv, request):
     except subprocess.TimeoutExpired:
         return UNAVAILABLE, b"", f"no answer within {TIMEOUT_SECONDS} s".encode()
     except OSError as exc:
-        return HELD, b"", f"cannot run {argv[0]}: {exc.strerror or exc}".encode()
+        return HELD, b"", f"{CANNOT_RUN}{argv[0]}: {exc.strerror or exc}".encode()
     return done.returncode, done.stdout, done.stderr
 
 
@@ -172,7 +173,8 @@ class Client:
         detail, label = _detail(err), label or verb
         message = detail if detail.startswith(f"{label}:") else f"{label}: " + (detail or f"exit {code}")
         if code == HELD:
-            raise Held(f"{message}; {Held.SUFFIX}")
+            # A spawn failure is the one exit 2 trk words itself, so the renewal ask can quote it.
+            raise Held(f"{message}; {Held.SUFFIX}", cannot_run=message if detail.startswith(CANNOT_RUN) else None)
         if code == UNAVAILABLE:
             raise Unavailable(message)
         if code == REFUSED:

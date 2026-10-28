@@ -19,6 +19,8 @@ trk pages setup --adapter "trk-pages-folder --dir ~/trk-pages" --home <open item
 
 `--adapter` is the adapter's command line, quoted as one argument. trk runs it once per call, adding the verb as the last argument. Setup runs `describe` and `check`, then stores the command line, the team, the expiry the adapter reported (if any) and the home item.
 
+The stored command line names the program by the absolute path setup resolved it to, so name it however your shell finds it. A timer runs with a bare PATH — a systemd user unit and a launchd job have neither `~/.local/bin` nor anything a login shell adds — so a bare command that works in `trk pages setup` and in a hand-run `trk pages tick` cannot be started on a timed one, and that reads as the adapter refusing. Symlinks are kept as they are, since resolving a virtualenv's `python` would leave the virtualenv behind. A program PATH does not have is stored as written and the check reports it as `cannot run`. Move the adapter, and run setup again.
+
 trk stores no secret. Keep credentials where the adapter reads them: its own config file, a file of mode 0600 named on its command line, or a keychain. The command line is stored and shown in `trk changes`, so a path to a secret may go on it and a secret itself never does.
 
 ## The protocol
@@ -28,7 +30,7 @@ trk runs `<command> <verb>`, writes one JSON object to the adapter's stdin, and 
 | Exit | Meaning | What trk does |
 |---|---|---|
 | `0` | ok: stdout holds the answer | goes on |
-| `2` | held: credentials rejected, a permission missing, or the adapter's configuration wrong | holds every page write until `trk pages setup` runs again, and opens the ask "Fix the page adapter" |
+| `2` | held: credentials rejected, a permission missing, or the adapter's configuration wrong | holds every page write until `trk pages setup` runs again, and opens the ask "Fix the page adapter". trk being unable to start the program at all counts as exit 2, and the ask says so rather than blaming credentials |
 | `3` | unavailable: try again later; the call **may have taken effect** | leaves the page dirty; after a `publish`, looks the page up by its tag before sending again |
 | `4` | refused: this call alone. stdout holds `{"error": "<code>", ...}` | acts on the code (below) |
 

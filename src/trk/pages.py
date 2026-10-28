@@ -9,7 +9,10 @@ and the setup's id are publisher state and are not.
 
 import hashlib
 import json
+import os
 import re
+import shlex
+import shutil
 import uuid
 from datetime import date, timedelta
 
@@ -56,11 +59,22 @@ def client(st):
 
 
 def _check_command(command):
+    """The command line to store: argv[0] as an absolute path where PATH has it now, the rest as written.
+
+    A timer's PATH is not a shell's. A systemd user unit or a launchd job runs with a bare PATH and no
+    ~/.local/bin, so an adapter named by bare command works in `pages setup` (and in a hand-run tick) and
+    cannot be started on any timed one, which reads as the adapter refusing. Storing what setup resolved
+    makes the two the same. Symlinks are kept: a venv's `python` resolved to its real interpreter would
+    leave the venv behind. An argv[0] PATH does not have is stored as written, and the live check below
+    reports it as `cannot run`."""
     try:
-        adapter.split(command)
+        argv = adapter.split(command)
     except ValueError as exc:
         raise usage(f"--adapter must name the adapter's command: {exc}") from None
-    return command.strip()
+    found = shutil.which(argv[0])
+    if found:
+        argv[0] = os.path.abspath(found)
+    return shlex.join(argv)
 
 
 def _check_expires(text):
