@@ -36,7 +36,9 @@ def test_ac1_a_reply_leaves_the_ask_open_and_is_listed_with_a_reply_id(store, tr
     expected = [{"comment": f"reply-{row['seq']}", "actor": "kim", "at": row["at"],
                  "excerpt": "Did Codex review approve? It's not clear from here.", "body": TEXT}]
     assert show(store, asked)["replies"] == expected
-    (waiting,) = [w for w in store("waiting", "--me", "kim", "--json").json()["asks"] if w["id"] == asked]
+    # The reply is kim's part done, so the ask waits on its asker now (UP-0036, test_replied_ask.py).
+    assert [w["id"] for w in store("waiting", "--me", "kim", "--json").json()["asks"]] == []
+    (waiting,) = [w for w in store("waiting", "--me", "worker", "--json").json()["asks"] if w["id"] == asked]
     assert waiting["replies"] == expected
     assert "replied" in store("show", asked).out
 

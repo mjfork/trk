@@ -158,7 +158,7 @@ def pages_to_read(conn):
     showing = set()
     for row in asks.waiting(conn):
         showing |= {link["id"] for link in items.lineage(conn, row["id"])}
-        showing.add(needs_you.key(asks.resolve(conn, row)))  # the Needs-you page of whoever it waits on
+        showing.add(needs_you.key(asks.waits_on(conn, row)))  # the Needs-you page of whoever it waits on
     showed = {r[0] for r in conn.execute("SELECT DISTINCT item_id FROM page_handles WHERE handle LIKE 'ask-%'")}
     read = showing | showed | pages.reread(conn)
     return [(item["id"], page["slug"]) for item, _level, page in pages.page_rows(conn)

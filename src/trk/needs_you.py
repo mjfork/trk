@@ -35,9 +35,9 @@ def actor_of(page_key):
 
 
 def people(conn):
-    """The actors who have a Needs-you page, by id: every human an open ask resolves to, the default owner
+    """The actors who have a Needs-you page, by id: every human an open ask waits on, the default owner
     when human, and everyone who has one already (a page is kept with nothing waiting)."""
-    found = {asks.resolve(conn, row) for row in asks.waiting(conn)}
+    found = {asks.waits_on(conn, row) for row in asks.waiting(conn)}  # the asker while they must confirm a reply
     found.add(conn.execute("SELECT value FROM meta WHERE key = 'default_owner'").fetchone()[0])
     humans = {row["id"] for row in conn.execute("SELECT id FROM actors WHERE kind = 'human'")}
     kept = {actor_of(row[0]) for row in conn.execute("SELECT item_id FROM pages WHERE item_id LIKE ?", (PREFIX + "%",))}
@@ -87,12 +87,13 @@ def blocked(conn, actor_id):
 
 
 def _holds(conn, row, actor_id):
-    """Whether an open blocker waits on the person: an ask resolving to them (a held one waits on no one yet),
-    or a decision or ticket they own."""
+    """Whether an open blocker waits on the person: an ask waiting on them (`asks.waits_on`, so one they have
+    already replied to waits on its asker, not on them; a held one waits on no one yet), or a decision or
+    ticket they own."""
     if row["status"] != "open":
         return False
     if row["form"] == "ask":
-        return asks.held_reason(conn, row) is None and asks.resolve(conn, row) == actor_id
+        return asks.held_reason(conn, row) is None and asks.waits_on(conn, row) == actor_id
     if row["form"] == "decision" or stages.is_ticket(row):
         return items.hierarchy(conn, row["id"])["effective_owner"] == actor_id
     return False

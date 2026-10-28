@@ -672,33 +672,55 @@ def held_reason(conn, row):
     return blast.held_reason(conn, row)
 
 
-def waiting(conn, me=None, root=None, client=None, now=None, with_held=False):
+def awaits_asker(conn, row):
+    """Whether an open ask waits on its asker rather than its addressee: the latest reply since its opening is
+    someone else's, so `awaiting` is `asker` and the next move is the asker's — confirm that reply as the
+    answer (`trk answer --from-comment`), reply back, or withdraw the ask. The addressee has done their part,
+    so no list, page or wake may put it in front of them again until they are asked something new (UP-0036)."""
+    return awaiting(row, replies(conn, row)) == "asker"
+
+
+def waits_on(conn, row):
+    """The actor an open ask waits on now: its asker while it is held back from its addressee (`held_reason`)
+    or waiting on the asker's confirmation of a reply (`awaits_asker`), else the addressee its role resolves
+    to now. `waiting --me <that actor>` lists the ask, a held one only `with_held`."""
+    if held_reason(conn, row) is not None or awaits_asker(conn, row):
+        return row["asker"]
+    return resolve(conn, row)
+
+
+def waiting(conn, me=None, root=None, client=None, now=None, with_held=False, with_replied=True):
     """Open ask rows whose role resolves to `me` (every open ask when `me` is None), under `root`
     (an item id; the ask itself counts) when given, and whose effective client is `client` when given.
     Highest urgency score first at `now` (the clock's when omitted), then by id.
 
-    A held ask (`held_reason`) waits on no one yet, so it is left out, unless `with_held`: then it is listed for
-    its asker (who must get the brief written) instead of its addressee, and for everyone when `me` is None."""
-    return [row for row, _ in ranked(conn, me, root, client, now, with_held)]
+    Two kinds of ask wait on their asker instead (`waits_on`), and are listed for the asker, never for the
+    addressee. A held ask (`held_reason`) waits on no one yet, so it is left out altogether unless
+    `with_held`: then it is listed for its asker (who must get the brief written), and for everyone when `me`
+    is None. An ask awaiting the asker's confirmation of a reply (`awaits_asker`) is listed unless
+    `with_replied` is false, which is how a caller that routes asks to people (`waiting --all --json`, read by
+    hx) keeps an ask the addressee has already replied to away from them."""
+    return [row for row, _ in ranked(conn, me, root, client, now, with_held, with_replied)]
 
 
-def _listed(conn, row, me, with_held):
-    """Whether `waiting` lists `row` for `me`: a held ask for its asker (or any `me` None) when `with_held`,
-    never otherwise; any other ask for its addressee."""
+def _listed(conn, row, me, with_held, with_replied):
+    """Whether `waiting` lists `row` for `me`: an ask that waits on its asker (`waits_on`) only for that asker,
+    or for any `me` None, and only while its kind of wait is included; any other ask for its addressee."""
     if held_reason(conn, row) is not None:
         return with_held and (me is None or row["asker"] == me)
+    if awaits_asker(conn, row):
+        return with_replied and (me is None or row["asker"] == me)
     return me is None or resolve(conn, row) == me
 
 
-def ranked(conn, me=None, root=None, client=None, now=None, with_held=False):
+def ranked(conn, me=None, root=None, client=None, now=None, with_held=False, with_replied=True):
     """`waiting`'s rows with their urgency: [(row, urgency)], in `waiting`'s order."""
     now = clock.now() if now is None else now
     root_id = items.get(conn, root)["id"] if root is not None else None
     rows = conn.execute("SELECT * FROM items WHERE form = 'ask' AND status = 'open' ORDER BY id").fetchall()
     if root_id is not None:
         rows = [row for row in rows if any(link["id"] == root_id for link in items.lineage(conn, row["id"]))]
-    if me is not None or not with_held:
-        rows = [row for row in rows if _listed(conn, row, me, with_held)]
+    rows = [row for row in rows if _listed(conn, row, me, with_held, with_replied)]
     if client is not None:
         rows = [row for row in rows if items.hierarchy(conn, row["id"])["effective_client"] == client]
     scored = [(row, urgency(conn, row, now)) for row in rows]

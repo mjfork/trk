@@ -117,15 +117,21 @@ def test_ac2_a_comment_on_the_needs_you_box_is_a_reply_the_asker_confirms(trk, t
     report = trk("pages", "tick", "--json").json()
     assert [(e["comment"], e["disposition"], e["ask"]) for e in report["pull"]["comments"]] == [(c, "reply", a1)]
     flush(trk)
-    assert "awaiting confirmation" in box(page(fake, trk_home, ME), a1)
+    # The reply is michael's part done, so the ask leaves his page for its asker (UP-0036); the program
+    # pages, which show every open ask below them, carry it on with the reply and what it awaits.
+    assert f'data-comment-id="ask-{a1}"' not in page(fake, trk_home, ME)
+    assert "awaiting confirmation" in box(page(fake, trk_home, two_roots["D"]), a1)
     confirm(trk, a1, c)
     trk("pages", "tick")
     (answered,) = [r for r in journal(trk_home) if r["change"] == "ask.answered"]
     assert answered["actor"] == "michael" and json.loads(answered["data"])["slug"] == slug(trk_home, ME)
+    # His box left this page when he replied, so the publisher's last word on the thread — the closing reply,
+    # the only one sent with `resolve: true` — is due in this pass, not after the next flush drops the box.
     assert replies(fake, c) == [(RECEIVED, "assistant"),
                                 ("Recorded as the answer to Which unit?, by michael (for michael). Ask closed.",
-                                 "assistant")]
-    assert fake.comments[c]["status"] == "open"
+                                 "assistant"),
+                                (f"Closed: Metres. Recorded on Which unit? ({a1})", "assistant")]
+    assert fake.comments[c]["status"] == "resolved"
     flush(trk)
     for key in (ME, two_roots["D"], two_roots["J"], two_roots["P"]):
         assert a1 not in asks_on(page(fake, trk_home, key))
@@ -216,7 +222,9 @@ def test_ac2_a_waiting_comment_counts_the_box_as_it_stood_when_it_was_written(tr
     ok(trk, "readdress", two_roots["A1"], "--to", "product", "--as", "worker")
     trk("pages", "tick")
     assert dispositions(trk_home)[c] == ("reply", two_roots["A3"])
-    assert sorted(waiting_ids(trk, "kim")) == sorted([two_roots["A1"], two_roots["A3"]])
+    # A3 has her reply now, so it waits on its asker (UP-0036); A1, readdressed to her, is hers to answer.
+    assert waiting_ids(trk, "kim") == [two_roots["A1"]]
+    assert waiting_ids(trk, "worker") == [two_roots["A3"]]
 
 
 @TABLE
@@ -255,6 +263,21 @@ def test_ac3_a_closed_blocker_takes_its_row_away(trk, trk_home, two_roots, fake,
     ok(trk, "answer", two_roots["A4"], "--outcome", "Q2", "--answer", body("Q2.\n"))
     flush(trk)
     assert two_roots["Q"] not in blocked_on(page(fake, trk_home, ME))
+
+
+def test_a_reply_from_the_addressee_takes_the_ask_and_its_blocked_row_off_their_page(trk, trk_home, two_roots,
+                                                                                     fake, body):
+    """UP-0036: michael has answered A1 by commenting, so until its asker confirms that reply, nothing on
+    this page waits on him — neither the ask nor the decision it holds up."""
+    d, a1 = two_roots["D"], two_roots["A1"]
+    assert a1 in asks_on(page(fake, trk_home, ME)) and d in blocked_on(page(fake, trk_home, ME))
+    ok(trk, "reply", a1, "--body", body("Metres.\n", "r.md"), "--as", "michael")
+    flush(trk)
+    mine = page(fake, trk_home, ME)
+    assert a1 not in asks_on(mine) and d not in blocked_on(mine)
+    assert two_roots["Q"] in blocked_on(mine)  # A2 and A4 are still his to answer
+    assert a1 in asks_on(page(fake, trk_home, two_roots["P"]))  # a program page shows every open ask below it
+    assert asks_on(page(fake, trk_home, KIM)) == waiting_ids(trk, "kim") == [two_roots["A3"]]
 
 
 # ----- AC 4: readdressing, role holders and closes reach the page; an empty page stays -----------------

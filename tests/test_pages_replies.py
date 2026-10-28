@@ -45,7 +45,9 @@ def test_ac1_a_comment_on_the_box_is_a_reply_and_the_ask_stays_open_and_blocking
     assert shown["replies"] == [{"comment": c, "actor": "kim", "at": replied["at"],
                                  "excerpt": "Metres. SI everywhere. Thanks.", "body": None}]
     assert f"open-ask:{a}" in item(trk, asked["D"])["why_not"]
-    assert [w["id"] for w in trk("waiting", "--me", "kim", "--json").json()["asks"]] == [a]
+    # kim's part is done, so the ask waits on its asker, not on them (UP-0036, test_replied_ask.py).
+    assert [w["id"] for w in trk("waiting", "--me", "kim", "--json").json()["asks"]] == []
+    assert [w["id"] for w in trk("waiting", "--me", "worker", "--json").json()["asks"]] == [a]
     assert replies(fake, c) == [(RECEIVED, "assistant")]
     assert fake.comments[c]["status"] == "open"
     assert "replied" in trk("show", a).out
@@ -216,22 +218,25 @@ def test_a_close_with_no_reply_queues_nothing(trk, trk_home, asked, fake):
     assert len(outbox(trk_home)) == queued
 
 
-# ----- ac-3: the box on the program page and the Needs-you page shows the reply ----------------------
+# ----- ac-3: the box on the program page shows the reply ---------------------------------------------
 
 
 @TABLE
 def test_ac3_the_box_shows_the_latest_reply_and_awaiting_confirmation(trk, trk_home, asked, fake):
+    """On the program pages, which show every open ask in the subtree. The addressee's Needs-you page is
+    where the ask leaves once they have replied (UP-0036): it lists what waits on them, and this does not."""
     a = asked["A"]
     comment(fake, trk_home, asked, "Metres?")
     pulled(trk)
     comment(fake, trk_home, asked, "Feet, on reflection.", on="J")
     pulled(trk)
     flush(trk)
-    for key in (asked["P"], "needs-you:kim"):
-        page = fake.body(page_row(trk_home, key)["slug"])
-        box = page[page.index(f'data-comment-id="ask-{a}"'):]
-        box = box[:box.index('<p class="cta">')]  # the box holds the question's own div
-        assert "Feet, on reflection." in box and "awaiting confirmation" in box and "Metres?" not in box
+    page = fake.body(page_row(trk_home, asked["P"])["slug"])
+    box = page[page.index(f'data-comment-id="ask-{a}"'):]
+    box = box[:box.index('<p class="cta">')]  # the box holds the question's own div
+    assert "Feet, on reflection." in box and "awaiting confirmation" in box and "Metres?" not in box
+    kims = fake.body(page_row(trk_home, "needs-you:kim")["slug"])
+    assert f'data-comment-id="ask-{a}"' not in kims and "Nothing is waiting on you" in kims
 
 
 def test_a_box_with_no_reply_shows_no_confirmation_line(trk, trk_home, asked, fake):

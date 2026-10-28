@@ -734,9 +734,12 @@ def cmd_waiting(args):
         else:
             me = store.resolve_actor(st, args.as_actor, guard=False)
         now = clock.now()
-        # JSON for everyone (`--all` included) leaves a held ask out unless `--me` is its asker: hx routes each ask
-        # that `--all --json` lists to its addressee, and a consumer must not wake anyone for a held one.
-        rows = asks.waiting(st.conn, me, args.root, args.client, now, with_held=me is not None or not args.json)
+        # JSON for everyone (`--all` included) leaves an ask that waits on its asker out unless `--me` is that
+        # asker: hx routes each ask that `--all --json` lists to its addressee, and a consumer must not wake
+        # anyone for a held one, nor the addressee for one they have already replied to (UP-0036).
+        asker_side = me is not None or not args.json
+        rows = asks.waiting(st.conn, me, args.root, args.client, now, with_held=asker_side,
+                            with_replied=asker_side)
         held = {row["id"]: asks.held_reason(st.conn, row) for row in rows}
         listed = [{**asks.waiting_json(st.conn, row, now), "held": held[row["id"]]} for row in rows]
     finally:
@@ -747,8 +750,11 @@ def cmd_waiting(args):
     for ask in listed:
         urgent = "! " if ask["urgent"] else ""
         parent = ask["parent"]
+        # Why the ask is with its asker rather than its addressee, when it is: `waiting` lists it for nobody else.
+        note = f"  [held: {held[ask['id']]}]" if held[ask["id"]] else \
+            f"  [replied: awaiting {ask['asker']}'s confirmation]" if ask["awaiting"] == "asker" else ""
         print(f"{ask['id']}  {urgent}{_addressed(ask)}  {parent['id']} {parent['title']}  {ask['title']}"
-              f"  {ask['urgency']['reason']}" + (f"  [held: {held[ask['id']]}]" if held[ask["id"]] else ""))
+              f"  {ask['urgency']['reason']}{note}")
 
 
 def cmd_answer(args):
@@ -1887,8 +1893,11 @@ def _human_item(item, section_bodies=True, held=None):
             lines.append(f"  held: {held} (the ask stays out of its addressee's waiting list until it can be approved)")
         if item["replies"] and item["status"] == "open":
             latest = item["replies"][-1]
-            lines.append(f"  replied: {len(item['replies'])}, latest {latest['comment']} by {latest['actor']}"
-                         f" (awaiting confirmation: trk answer {item['id']} --from-comment {latest['comment']})")
+            # Only a reply the asker has not answered back waits on confirmation (`awaiting`).
+            tail = (f" (awaiting confirmation: trk answer {item['id']} --from-comment {latest['comment']})"
+                    if item["awaiting"] == "asker" else "")
+            lines.append(f"  replied: {len(item['replies'])}, latest {latest['comment']}"
+                         f" by {latest['actor']}{tail}")
     if item["urgent"]:
         lines.append("  urgent")
     if item["spec_state"]:
